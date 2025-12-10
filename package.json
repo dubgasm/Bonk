@@ -1,0 +1,82 @@
+{
+  "name": "bonk-metadata-editor",
+  "version": "1.0.0",
+  "description": "Music metadata editing app with Rekordbox 7 import/export",
+  "main": "electron.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
+    "dev:renderer": "vite --port 5173 --strictPort",
+    "dev:electron": "wait-on http://localhost:5173 && NODE_ENV=development electron .",
+    "build": "tsc && vite build",
+    "postinstall": "electron-builder install-app-deps && npm run rebuild-native",
+    "rebuild-native": "electron-rebuild -f -w sharp",
+    "build:electron": "electron-builder",
+    "preview": "vite preview",
+    "test:prod": "npm run build && NODE_ENV=production electron ."
+  },
+  "keywords": [
+    "rekordbox",
+    "metadata",
+    "dj",
+    "music"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@types/react-window": "^1.8.8",
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^8.2.2",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "react-window": "^2.2.3",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.8",
+    "wait-on": "^7.2.0"
+  },
+  "dependencies": {
+    "@tonaljs/tonal": "^4.10.0",
+    "axios": "^1.6.2",
+    "dotenv": "^17.2.3",
+    "essentia.js": "^0.1.3",
+    "fast-xml-parser": "^4.3.2",
+    "ffmetadata": "^1.7.0",
+    "lucide-react": "^0.294.0",
+    "music-metadata": "^8.1.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "sharp": "^0.33.1",
+    "zustand": "^4.4.7"
+  },
+  "build": {
+    "appId": "com.bonk.metadata-editor",
+    "productName": "Bonk Metadata Editor",
+    "files": [
+      "dist/**/*",
+      "electron.js",
+      "preload.js",
+      "bin/**/*",
+      "rekordbox_bridge.py",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/sharp/**/*",
+      "**/node_modules/@img/**/*",
+      "rekordbox_bridge.py"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.music",
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    }
+  }
+}

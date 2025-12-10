@@ -1,0 +1,372 @@
+import { useState } from 'react';
+import { useLibraryStore } from './store/useLibraryStore';
+import { useSettingsStore } from './store/useSettingsStore';
+import { RekordboxParser } from './utils/rekordboxParser';
+import Header from './components/Header';
+import TrackTable from './components/TrackTable';
+import TrackEditor from './components/TrackEditor';
+import SearchBar from './components/SearchBar';
+import ExportModal from './components/ExportModal';
+import SettingsModal from './components/SettingsModal';
+import RekordboxDBModal from './components/RekordboxDBModal';
+import PlaylistSidebar from './components/PlaylistSidebar';
+import { Upload, FolderOpen } from 'lucide-react';
+import { Track } from './types/track';
+import './styles/App.css';
+
+declare global {
+  interface Window {
+    electronAPI: {
+      selectFile: () => Promise<string | null>;
+      readFile: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+      saveFile: (content: string) => Promise<{ success: boolean; path?: string; error?: string }>;
+      writeTags: (tracks: any[], settings: any) => Promise<{ success: boolean; count?: number; errors?: string[]; error?: string }>;
+      selectFolder: () => Promise<string | null>;
+      scanFolder: (folderPath: string) => Promise<{ success: boolean; library?: any; error?: string }>;
+      detectKey: (trackPath: string) => Promise<{ success: boolean; key?: string; confidence?: number; method?: string; error?: string }>;
+      findTags: (tracks: any[], options: any) => Promise<{ success: boolean; tracksUpdated: number; tracksSkipped: number; errors: any[] }>;
+      reloadTrack: (trackPath: string) => Promise<any>;
+      onFindTagsProgress?: (callback: (data: any) => void) => void;
+      onTrackMetadataUpdate?: (callback: (data: { trackId: string; updates: any }) => void) => void;
+      removeFindTagsListener?: () => void;
+      rekordboxGetConfig?: () => Promise<{ success: boolean; config?: any; error?: string }>;
+      rekordboxSetConfig?: (installDir: string, appDir: string) => Promise<{ success: boolean; error?: string }>;
+      rekordboxImportDatabase?: (dbPath?: string) => Promise<{ success: boolean; library?: any; trackCount?: number; playlistCount?: number; error?: string }>;
+      rekordboxExportDatabase?: (library: any, dbPath?: string, syncMode?: string) => Promise<{ success: boolean; added?: number; updated?: number; skipped?: number; errors?: string[]; error?: string }>;
+      rekordboxSyncDatabase?: (library: any, dbPath?: string) => Promise<{ success: boolean; updated_in_db?: number; updated_in_bonk?: number; conflicts?: any[]; tracks?: any[]; error?: string }>;
+      rekordboxSelectDatabase?: () => Promise<string | null>;
+      checkFileExists?: (filePath: string) => Promise<boolean>;
+      convertAudioFile?: (inputPath: string, outputPath: string, format: string) => Promise<{ success: boolean; outputPath?: string; inputSize?: number; outputSize?: number; error?: string; skipped?: boolean }>;
+      batchConvertTracks?: (conversions: any[], options: any) => Promise<{ success: boolean; converted?: number; skipped?: number; failed?: number; results?: any[]; errors?: any[]; error?: string }>;
+      updateRekordboxPath?: (trackId: string, newPath: string, oldPath: string, dbPath: string) => Promise<{ success: boolean; error?: string }>;
+      onConversionProgress?: (callback: (data: any) => void) => void;
+      removeConversionProgressListener?: () => void;
+    };
+  }
+}
+
+function App() {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showRekordboxDBModal, setShowRekordboxDBModal] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const { 
+    library, 
+    setLibrary, 
+    selectedTrack, 
+    selectedPlaylist, 
+    setSelectedPlaylist,
+    addTracksToPlaylist,
+    createPlaylist,
+    createFolder,
+    renamePlaylist,
+    deletePlaylist,
+    duplicatePlaylist,
+    showMissingOnly,
+    setShowMissingOnly,
+    deleteTracks
+  } = useLibraryStore();
+  const { setLastSyncDate } = useSettingsStore();
+
+  const parser = new RekordboxParser();
+
+  const handleRekordboxDBImport = (importedLibrary: any) => {
+    // Merge with existing library or set new library
+    if (library) {
+      // Normalize location for comparison
+      const normalizeLocation = (loc: string | undefined): string => {
+        if (!loc) return '';
+        return loc
+          .replace(/^file:\/\/localhost/i, '')
+          .replace(/^file:\/\//i, '')
+          .replace(/\\/g, '/')
+          .toLowerCase()
+          .trim();
+      };
+      
+      // Create maps for efficient lookup
+      const existingLocations = new Set(
+        library.tracks.map((t: Track) => normalizeLocation(t.Location))
+      );
+      const existingTrackIDs = new Set(
+        library.tracks.map((t: Track) => t.TrackID)
+      );
+      
+      // Filter out duplicates by both Location and TrackID
+      const newTracks = importedLibrary.tracks.filter((t: Track) => {
+        const normalizedLoc = normalizeLocation(t.Location);
+        return !existingLocations.has(normalizedLoc) && !existingTrackIDs.has(t.TrackID);
+      });
+      
+      console.log(`Import: ${importedLibrary.tracks.length} tracks from DB, ${newTracks.length} new, ${importedLibrary.tracks.length - newTracks.length} duplicates skipped`);
+      
+      const mergedLibrary = {
+        tracks: [...library.tracks, ...newTracks],
+        playlists: [...library.playlists, ...importedLibrary.playlists],
+      };
+      setLibrary(mergedLibrary);
+    } else {
+      setLibrary(importedLibrary);
+    }
+  };
+
+  const handleRekordboxDBSync = (syncedLibrary: any) => {
+    setLibrary(syncedLibrary);
+    setLastSyncDate(new Date().toISOString());
+  };
+
+  const handleImport = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      if (!window.electronAPI) {
+        throw new Error('Electron API not available. Please run the app with: npm run dev');
+      }
+
+      const filePath = await window.electronAPI.selectFile();
+      if (!filePath) {
+        setLoading(false);
+        return;
+      }
+
+      const result = await window.electronAPI.readFile(filePath);
+      if (!result.success || !result.content) {
+        throw new Error(result.error || 'Failed to read file');
+      }
+
+      const parsedLibrary = parser.parseXML(result.content);
+      setLibrary(parsedLibrary);
+      setLoading(false);
+    } catch (err: any) {
+      setError(err.message);
+      setLoading(false);
+    }
+  };
+
+  const handleImportFolder = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      if (!window.electronAPI) {
+        throw new Error('Electron API not available. Please run the app with: npm run dev');
+      }
+
+      const folderPath = await window.electronAPI.selectFolder();
+      if (!folderPath) {
+        setLoading(false);
+        return;
+      }
+
+      const result = await window.electronAPI.scanFolder(folderPath);
+      if (!result.success || !result.library) {
+        throw new Error(result.error || 'Failed to scan folder');
+      }
+
+      console.log('Scan result:', result.library.tracks.length, 'tracks found');
+
+      if (result.library.tracks.length === 0) {
+        setError('No audio files found in selected folder. Supported formats: MP3, FLAC, M4A, WAV, AIFF, OGG, WMA');
+        setLoading(false);
+        return;
+      }
+
+      // Merge with existing library if any, or set new library
+      if (library) {
+        // Normalize location for comparison
+        const normalizeLocation = (loc: string | undefined): string => {
+          if (!loc) return '';
+          return loc
+            .replace(/^file:\/\/localhost/i, '')
+            .replace(/^file:\/\//i, '')
+            .replace(/\\/g, '/')
+            .toLowerCase()
+            .trim();
+        };
+        
+        // Create maps for efficient lookup
+        const existingLocations = new Set(
+          library.tracks.map((t: Track) => normalizeLocation(t.Location))
+        );
+        const existingTrackIDs = new Set(
+          library.tracks.map((t: Track) => t.TrackID)
+        );
+        
+        // Filter out duplicates by both Location and TrackID
+        const newTracks = result.library.tracks.filter((t: Track) => {
+          const normalizedLoc = normalizeLocation(t.Location);
+          return !existingLocations.has(normalizedLoc) && !existingTrackIDs.has(t.TrackID);
+        });
+        
+        console.log(`Folder scan: ${result.library.tracks.length} tracks found, ${newTracks.length} new, ${result.library.tracks.length - newTracks.length} duplicates skipped`);
+        
+        const mergedLibrary = {
+          tracks: [...library.tracks, ...newTracks],
+          playlists: [...library.playlists, ...result.library.playlists],
+        };
+        setLibrary(mergedLibrary);
+      } else {
+        setLibrary(result.library);
+      }
+
+      setLoading(false);
+    } catch (err: any) {
+      setError(err.message);
+      setLoading(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (!library) {
+      setError('No library loaded');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      if (!window.electronAPI) {
+        throw new Error('Electron API not available. Please run the app with: npm run dev');
+      }
+
+      const xmlContent = parser.exportToXML(library);
+      const result = await window.electronAPI.saveFile(xmlContent);
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to save file');
+      }
+
+      setLastSyncDate(new Date().toISOString());
+      setLoading(false);
+    } catch (err: any) {
+      setError(err.message);
+      setLoading(false);
+    }
+  };
+
+  const handleOpenExportModal = () => {
+    if (!library) {
+      setError('No library loaded');
+      return;
+    }
+    setShowExportModal(true);
+  };
+
+  return (
+    <div className="app">
+      <Header
+        onImport={handleImport}
+        onImportFolder={handleImportFolder}
+        onExport={handleOpenExportModal}
+        onSettings={() => setShowSettingsModal(true)}
+        onDatabase={() => setShowRekordboxDBModal(true)}
+        loading={loading}
+        hasLibrary={!!library}
+      />
+      
+      {error && (
+        <div className="error-banner">
+          <span>{error}</span>
+          <button onClick={() => setError(null)}>×</button>
+        </div>
+      )}
+
+      {!library && !loading && (
+        <div className="welcome">
+          <div className="welcome-content">
+            <h1>Welcome to Bonk</h1>
+            <p>Music Metadata Editor with Rekordbox 7 Support</p>
+            <div className="welcome-buttons">
+              <button className="import-btn-large" onClick={handleImport}>
+                <Upload size={24} />
+                <span>Import Rekordbox XML</span>
+              </button>
+              <button className="import-btn-large import-btn-secondary" onClick={handleImportFolder}>
+                <FolderOpen size={24} />
+                <span>Import Folder</span>
+              </button>
+            </div>
+            <p className="welcome-hint">
+              Import XML from Rekordbox or scan a folder to create playlists from folder structure
+            </p>
+          </div>
+        </div>
+      )}
+
+      {loading && (
+        <div className="loading">
+          <div className="spinner"></div>
+          <p>Loading...</p>
+        </div>
+      )}
+
+      {library && !loading && (
+        <div className="main-content with-sidebar">
+          <PlaylistSidebar
+            playlists={library.playlists}
+            onPlaylistSelect={setSelectedPlaylist}
+            selectedPlaylist={selectedPlaylist}
+            trackCount={library.tracks.length}
+            onAddTracksToPlaylist={addTracksToPlaylist}
+            onCreatePlaylist={createPlaylist}
+            onCreateFolder={createFolder}
+            onRenamePlaylist={renamePlaylist}
+            onDeletePlaylist={deletePlaylist}
+            onDuplicatePlaylist={duplicatePlaylist}
+            isCollapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+            showMissingOnly={showMissingOnly}
+            onToggleMissingOnly={() => setShowMissingOnly(!showMissingOnly)}
+            missingCount={library.tracks.filter(t => t.isMissing).length}
+            onDeleteMissingTracks={() => {
+              const missingTrackIds = library.tracks
+                .filter(t => t.isMissing)
+                .map(t => t.TrackID);
+              deleteTracks(missingTrackIds);
+              setShowMissingOnly(false);
+            }}
+          />
+          <div className="content-wrapper">
+            <div className="left-panel">
+              <SearchBar />
+              <TrackTable />
+            </div>
+            {selectedTrack && (
+              <div className="right-panel">
+                <TrackEditor />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showExportModal && library && (
+        <ExportModal
+          onClose={() => setShowExportModal(false)}
+          onExport={handleExport}
+          trackCount={library.tracks.length}
+        />
+      )}
+
+      {showSettingsModal && (
+        <SettingsModal onClose={() => setShowSettingsModal(false)} />
+      )}
+
+      {showRekordboxDBModal && (
+        <RekordboxDBModal
+          onClose={() => setShowRekordboxDBModal(false)}
+          onImport={handleRekordboxDBImport}
+          onSync={handleRekordboxDBSync}
+          currentLibrary={library}
+        />
+      )}
+    </div>
+  );
+}
+
+export default App;
+

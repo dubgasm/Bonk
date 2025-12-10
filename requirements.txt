@@ -1,0 +1,15 @@
+# Rekordbox Database Integration Requirements
+# Install with: pip3 install -r requirements.txt
+
+# Note: pyrekordbox is included locally in pyrekordbox-0.4.4/
+# But you can also install from PyPI:
+# pyrekordbox>=0.4.4
+
+# SQLCipher support (required for Rekordbox 6/7 database encryption)
+sqlcipher3>=0.5.0
+
+# Additional dependencies (usually auto-installed with pyrekordbox)
+construct>=2.10.0
+lxml>=4.9.0
+pycryptodome>=3.15.0
+

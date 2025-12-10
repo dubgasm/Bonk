@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, memo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import TrackContextMenu from './TrackContextMenu';
@@ -8,99 +8,18 @@ import DuplicateDetectionModal from './DuplicateDetectionModal';
 import BatchRenameModal from './BatchRenameModal';
 import FormatConversionModal, { FormatConversion } from './FormatConversionModal';
 import FindLostTracksModal from './FindLostTracksModal';
+import RemoveFromPlaylistModal from './RemoveFromPlaylistModal';
+import SmartFixesModal, { SmartFixConfig } from './SmartFixesModal';
 import { TagFinderOptions } from '../types/musicDatabase';
 import { Track } from '../types/track';
-
-// Memoized TrackRow component to prevent unnecessary re-renders
-const TrackRow = memo(({ 
-  track, 
-  isSelected, 
-  isMultiSelected, 
-  onRowClick, 
-  onContextMenu, 
-  onDragStart,
-  onToggleSelection,
-  renderEditableCell,
-  formatTime
-}: {
-  track: Track;
-  isSelected: boolean;
-  isMultiSelected: boolean;
-  onRowClick: (track: Track, e: React.MouseEvent) => void;
-  onContextMenu: (track: Track, e: React.MouseEvent) => void;
-  onDragStart: (e: React.DragEvent, track: Track) => void;
-  onToggleSelection: (trackId: string) => void;
-  renderEditableCell: (track: Track, field: string, value: string, className?: string) => JSX.Element;
-  formatTime: (ms: string | undefined) => string;
-}) => {
-  const bpmValue = useMemo(() => 
-    track.AverageBpm ? parseFloat(track.AverageBpm).toFixed(1) : '', 
-    [track.AverageBpm]
-  );
-
-  return (
-    <tr
-      className={`${isSelected ? 'selected' : ''} ${
-        isMultiSelected ? 'multi-selected' : ''
-      } ${track.isMissing ? 'missing-track' : ''}`}
-      onClick={(e) => onRowClick(track, e)}
-      onContextMenu={(e) => onContextMenu(track, e)}
-      draggable={!track.isMissing}
-      onDragStart={(e) => onDragStart(e, track)}
-    >
-      <td onClick={(e) => e.stopPropagation()}>
-        <input
-          type="checkbox"
-          checked={isMultiSelected}
-          onChange={() => onToggleSelection(track.TrackID)}
-        />
-      </td>
-      <td className="album-art-cell">
-        {track.AlbumArt ? (
-          <img 
-            src={track.AlbumArt} 
-            alt="Album Art" 
-            className="album-art-thumb"
-            title={track.Album || 'Album Art'}
-            loading="lazy"
-          />
-        ) : (
-          <div className="album-art-placeholder">♪</div>
-        )}
-      </td>
-      {renderEditableCell(track, 'Name', track.Name || 'Unknown', 'track-name')}
-      {renderEditableCell(track, 'Artist', track.Artist || 'Unknown Artist')}
-      {renderEditableCell(track, 'Album', track.Album || '')}
-      {renderEditableCell(track, 'Genre', track.Genre || '')}
-      {renderEditableCell(track, 'AverageBpm', bpmValue)}
-      {renderEditableCell(track, 'Key', track.Key || '')}
-      <td>{formatTime(track.TotalTime)}</td>
-      {renderEditableCell(track, 'Year', track.Year || '')}
-    </tr>
-  );
-}, (prevProps, nextProps) => {
-  // Custom comparison function for memo
-  return (
-    prevProps.track.TrackID === nextProps.track.TrackID &&
-    prevProps.isSelected === nextProps.isSelected &&
-    prevProps.isMultiSelected === nextProps.isMultiSelected &&
-    prevProps.track.Name === nextProps.track.Name &&
-    prevProps.track.Artist === nextProps.track.Artist &&
-    prevProps.track.Album === nextProps.track.Album &&
-    prevProps.track.AverageBpm === nextProps.track.AverageBpm &&
-    prevProps.track.Key === nextProps.track.Key &&
-    prevProps.track.AlbumArt === nextProps.track.AlbumArt &&
-    prevProps.track.isMissing === nextProps.track.isMissing
-  );
-});
-
-TrackRow.displayName = 'TrackRow';
+const columnTemplate = '40px 60px 1.5fr 1.2fr 1.2fr 1fr 0.8fr 0.7fr 0.6fr';
 
 export default function TrackTable() {
   const {
     filteredTracks,
     selectedTrack,
     selectedTracks,
+    selectedPlaylist,
     setSelectedTrack,
     toggleTrackSelection,
     selectAll,
@@ -110,7 +29,11 @@ export default function TrackTable() {
     deleteTracks,
     renameTracks,
     convertTrackFormats,
+    removeTracksFromPlaylist,
+    applySmartFixes,
   } = useLibraryStore();
+
+  const { skipPlaylistRemovalConfirm, setSkipPlaylistRemovalConfirm } = useSettingsStore();
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; track?: typeof filteredTracks[0] } | null>(null);
   const [showFindTagsModal, setShowFindTagsModal] = useState(false);
@@ -118,6 +41,8 @@ export default function TrackTable() {
   const [showBatchRenameModal, setShowBatchRenameModal] = useState(false);
   const [showFormatConversionModal, setShowFormatConversionModal] = useState(false);
   const [showFindLostTracksModal, setShowFindLostTracksModal] = useState(false);
+  const [showRemoveFromPlaylistModal, setShowRemoveFromPlaylistModal] = useState(false);
+  const [showSmartFixesModal, setShowSmartFixesModal] = useState(false);
   const [modalTrack, setModalTrack] = useState<typeof filteredTracks[0] | null>(null);
   const [editingCell, setEditingCell] = useState<{ trackId: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -132,7 +57,7 @@ export default function TrackTable() {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }, []);
 
-  const handleRowClick = (track: typeof filteredTracks[0], e: React.MouseEvent) => {
+  const handleRowClick = (track: Track, e: React.MouseEvent) => {
     if (e.ctrlKey || e.metaKey) {
       // Multi-select with Cmd/Ctrl
       toggleTrackSelection(track.TrackID);
@@ -145,7 +70,7 @@ export default function TrackTable() {
     }
   };
 
-  const handleContextMenu = (track: typeof filteredTracks[0], e: React.MouseEvent) => {
+  const handleContextMenu = (track: Track, e: React.MouseEvent) => {
     e.preventDefault();
     // Set the right-clicked track along with position
     setContextMenu({ 
@@ -180,7 +105,7 @@ export default function TrackTable() {
     }
   };
 
-  const handleDragStart = (e: React.DragEvent, track: typeof filteredTracks[0]) => {
+  const handleDragStart = (e: React.DragEvent, track: Track) => {
     // Get all selected track IDs, or just the dragged track if not selected
     const trackIds = selectedTracks.has(track.TrackID)
       ? Array.from(selectedTracks)
@@ -191,12 +116,12 @@ export default function TrackTable() {
   };
 
   // Memoize renderEditableCell to prevent unnecessary re-renders
-  const renderEditableCell = useCallback((track: typeof filteredTracks[0], field: string, value: string, className?: string) => {
+  const renderEditableCell = useCallback((track: Track, field: string, value: string, className?: string) => {
     const isEditing = editingCell?.trackId === track.TrackID && editingCell?.field === field;
     
     if (isEditing) {
       return (
-        <td className={className} onClick={(e) => e.stopPropagation()}>
+        <div className={className} onClick={(e) => e.stopPropagation()}>
           <input
             type="text"
             value={editValue}
@@ -206,18 +131,18 @@ export default function TrackTable() {
             autoFocus
             className="cell-editor"
           />
-        </td>
+        </div>
       );
     }
     
     return (
-      <td
+      <div
         className={className}
         onDoubleClick={() => handleCellDoubleClick(track, field)}
         title="Double-click to edit"
       >
         {value || '-'}
-      </td>
+      </div>
     );
   }, [editingCell, editValue, handleCellBlur, handleCellKeyDown, handleCellDoubleClick]);
 
@@ -336,6 +261,63 @@ export default function TrackTable() {
     }
   };
 
+  const handleRemoveFromPlaylist = (track?: typeof filteredTracks[0]) => {
+    if (!selectedPlaylist) return;
+
+    // Get track IDs to remove
+    const trackIds = track
+      ? [track.TrackID]
+      : Array.from(selectedTracks);
+
+    if (trackIds.length === 0) return;
+
+    // Check if we should skip confirmation
+    if (skipPlaylistRemovalConfirm) {
+      // Remove tracks from playlist without confirmation
+      removeTracksFromPlaylist(selectedPlaylist.Name, trackIds);
+      return;
+    }
+
+    // Show confirmation modal
+    setShowRemoveFromPlaylistModal(true);
+  };
+
+  const handleConfirmRemoveFromPlaylist = (alsoDeleteFromLibrary: boolean) => {
+    if (!selectedPlaylist) return;
+
+    const trackIds = selectedTracks.size > 0
+      ? Array.from(selectedTracks)
+      : []; // This shouldn't happen, but safety check
+
+    if (trackIds.length === 0) return;
+
+    // Remove from playlist
+    removeTracksFromPlaylist(selectedPlaylist.Name, trackIds);
+
+    // If also deleting from library, do that too
+    if (alsoDeleteFromLibrary) {
+      deleteTracks(trackIds);
+    }
+
+    // Clear selection after removal
+    clearSelection();
+  };
+
+  const handleSmartFixes = async (config: SmartFixConfig) => {
+    try {
+      const trackIds = selectedTracks.size > 0 ? Array.from(selectedTracks) : filteredTracks.map(t => t.TrackID);
+      const result = await applySmartFixes(trackIds, config);
+
+      if (result.updated > 0) {
+        alert(`Successfully applied smart fixes to ${result.updated} track${result.updated !== 1 ? 's' : ''}!`);
+      } else {
+        alert('No tracks were modified by the selected fixes.');
+      }
+    } catch (error) {
+      alert(`Error applying smart fixes: ${error}`);
+    }
+  };
+
   const handleFindTags = async (options: TagFinderOptions, track?: typeof filteredTracks[0]) => {
     // If a specific track is provided (right-click), use it; otherwise use selected tracks
     const tracksToSearch = track 
@@ -361,7 +343,6 @@ export default function TrackTable() {
         ...options,
         spotifyClientId: apiCredentials.spotifyClientId,
         spotifyClientSecret: apiCredentials.spotifyClientSecret,
-        discogsToken: apiCredentials.discogsToken,
       };
       
       const result = await window.electronAPI.findTags(tracksToSearch, optionsWithCredentials);
@@ -523,60 +504,97 @@ export default function TrackTable() {
         onBatchRename={() => setShowBatchRenameModal(true)}
         onConvertFormat={() => setShowFormatConversionModal(true)}
         onFindLostTracks={() => setShowFindLostTracksModal(true)}
+        onSmartFixes={() => setShowSmartFixesModal(true)}
       />
       
       <div className="track-table-container">
-        {filteredTracks.length > 0 ? (
-          <table className="track-table">
-          <thead>
-          <tr>
-            <th style={{ width: '40px' }}>
-              <input
-                type="checkbox"
-                checked={selectedTracks.size === filteredTracks.length && filteredTracks.length > 0}
-                onChange={() => {
-                  if (selectedTracks.size === filteredTracks.length) {
-                    clearSelection();
-                  } else {
-                    selectAll();
-                  }
-                }}
-              />
-            </th>
-            <th style={{ width: '60px' }}>Art</th>
-            <th>Title</th>
-            <th>Artist</th>
-            <th>Album</th>
-            <th>Genre</th>
-            <th>BPM</th>
-            <th>Key</th>
-            <th>Time</th>
-            <th>Year</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredTracks.map((track) => {
-            const isSelected = selectedTrack?.TrackID === track.TrackID;
-            const isMultiSelected = selectedTracks.has(track.TrackID);
-            
-            return (
-              <TrackRow
-                key={track.TrackID}
-                track={track}
-                isSelected={isSelected}
-                isMultiSelected={isMultiSelected}
-                onRowClick={handleRowClick}
-                onContextMenu={handleContextMenu}
-                onDragStart={handleDragStart}
-                onToggleSelection={toggleTrackSelection}
-                renderEditableCell={renderEditableCell}
-                formatTime={formatTime}
-              />
-            );
-          })}
-        </tbody>
-        </table>
-        ) : (
+        {filteredTracks.length > 0 && (
+          <div style={{ width: '100%' }}>
+            <div
+              className="track-table-header"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: columnTemplate,
+                alignItems: 'center',
+                padding: '6px 8px',
+                boxSizing: 'border-box',
+                borderBottom: '1px solid #222',
+                fontWeight: 600
+              }}
+            >
+              <div>
+                <input
+                  type="checkbox"
+                  checked={selectedTracks.size === filteredTracks.length && filteredTracks.length > 0}
+                  onChange={() => {
+                    if (selectedTracks.size === filteredTracks.length) {
+                      clearSelection();
+                    } else {
+                      selectAll();
+                    }
+                  }}
+                />
+              </div>
+              <div style={{ width: '60px' }}>Art</div>
+              <div>Title</div>
+              <div>Artist</div>
+              <div>Album</div>
+              <div>Genre</div>
+              <div>BPM</div>
+              <div>Key</div>
+              <div>Time</div>
+              <div>Year</div>
+            </div>
+
+            <div className="track-table-rows" style={{ maxHeight: 600, overflowY: 'auto' }}>
+              {filteredTracks.map((track, index) => {
+                const isSelected = selectedTrack?.TrackID === track.TrackID;
+                const isMultiSelected = selectedTracks.has(track.TrackID);
+                const bpmValue = track.AverageBpm ? parseFloat(track.AverageBpm).toFixed(1) : '';
+
+                return (
+                  <div
+                    key={track.TrackID || index}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: columnTemplate,
+                      alignItems: 'center',
+                      padding: '6px 8px',
+                      boxSizing: 'border-box',
+                    }}
+                    className={`${isSelected ? 'selected' : ''} ${
+                      isMultiSelected ? 'multi-selected' : ''
+                    } ${track.isMissing ? 'missing-track' : ''}`}
+                    onClick={(e) => handleRowClick(track, e)}
+                    onContextMenu={(e) => handleContextMenu(track, e)}
+                    draggable={!track.isMissing}
+                    onDragStart={(e) => handleDragStart(e, track)}
+                  >
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isMultiSelected}
+                        onChange={() => toggleTrackSelection(track.TrackID)}
+                      />
+                    </div>
+                    <div className="album-art-cell">
+                      <div className="album-art-placeholder">♪</div>
+                    </div>
+                    {renderEditableCell(track, 'Name', track.Name || 'Unknown', 'track-name')}
+                    {renderEditableCell(track, 'Artist', track.Artist || 'Unknown Artist')}
+                    {renderEditableCell(track, 'Album', track.Album || '')}
+                    {renderEditableCell(track, 'Genre', track.Genre || '')}
+                    {renderEditableCell(track, 'AverageBpm', bpmValue)}
+                    {renderEditableCell(track, 'Key', track.Key || '')}
+                    <div>{formatTime(track.TotalTime)}</div>
+                    {renderEditableCell(track, 'Year', track.Year || '')}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {!filteredTracks.length && (
           <div className="empty-state">
             <p>No tracks found</p>
           </div>
@@ -600,6 +618,8 @@ export default function TrackTable() {
           onSelectAll={selectAll}
           onClearSelection={clearSelection}
           selectedCount={selectedTracks.size}
+          selectedPlaylist={selectedPlaylist}
+          onRemoveFromPlaylist={() => handleRemoveFromPlaylist(contextMenu.track)}
         />
       )}
 
@@ -655,6 +675,28 @@ export default function TrackTable() {
       {showFindLostTracksModal && (
         <FindLostTracksModal
           onClose={() => setShowFindLostTracksModal(false)}
+        />
+      )}
+
+      {showRemoveFromPlaylistModal && selectedPlaylist && (
+        <RemoveFromPlaylistModal
+          isOpen={showRemoveFromPlaylistModal}
+          onClose={() => setShowRemoveFromPlaylistModal(false)}
+          onConfirm={handleConfirmRemoveFromPlaylist}
+          trackCount={selectedTracks.size}
+          playlistName={selectedPlaylist.Name}
+          skipConfirm={skipPlaylistRemovalConfirm}
+          onSetSkipConfirm={setSkipPlaylistRemovalConfirm}
+        />
+      )}
+
+      {showSmartFixesModal && (
+        <SmartFixesModal
+          isOpen={showSmartFixesModal}
+          onClose={() => setShowSmartFixesModal(false)}
+          selectedTracks={Array.from(selectedTracks)}
+          totalTracks={filteredTracks.length}
+          onApplyFixes={handleSmartFixes}
         />
       )}
     </div>

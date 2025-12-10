@@ -183,13 +183,17 @@ export default function FormatConversionModal({
       onConvert(conversions);
 
       // Show results
+      const converted = result.converted || 0;
+      const skipped = result.skipped || 0;
+      const failed = result.failed || 0;
+      
       let message = `Conversion Complete!\n\n`;
-      message += `✓ ${result.converted || 0} track${(result.converted || 0) !== 1 ? 's' : ''} converted\n`;
-      if ((result.skipped || 0) > 0) {
-        message += `⏭ ${result.skipped} track${result.skipped !== 1 ? 's' : ''} skipped (already exist)\n`;
+      message += `✓ ${converted} track${converted !== 1 ? 's' : ''} converted\n`;
+      if (skipped > 0) {
+        message += `⏭ ${skipped} track${skipped !== 1 ? 's' : ''} skipped (already exist)\n`;
       }
-      if ((result.failed || 0) > 0) {
-        message += `✗ ${result.failed} track${result.failed !== 1 ? 's' : ''} failed\n`;
+      if (failed > 0) {
+        message += `✗ ${failed} track${failed !== 1 ? 's' : ''} failed\n`;
       }
       if (result.errors && result.errors.length > 0) {
         message += `\nErrors:\n${result.errors.slice(0, 5).map((e: any) => `- ${e.track}: ${e.error}`).join('\n')}`;

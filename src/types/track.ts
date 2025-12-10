@@ -24,7 +24,7 @@ export interface Track {
   Key?: string;
   AlbumArt?: string;  // Base64-encoded image data
   
-  // Enhanced Beatport metadata
+  // Enhanced metadata
   CatalogNumber?: string;  // e.g., "LM005"
   Publisher?: string;       // Record label/publisher
   Writers?: string;         // Comma-separated writers
@@ -54,6 +54,63 @@ export interface Playlist {
   KeyType: string;
   Entries: string[];
   Children?: Playlist[];
+}
+
+export enum SmartListProperty {
+  ARTIST = 'ARTIST',
+  ALBUM = 'ALBUM',
+  ALBUM_ARTIST = 'ALBUM_ARTIST',
+  ORIGINAL_ARTIST = 'ORIGINAL_ARTIST',
+  BPM = 'BPM',
+  GROUPING = 'GROUPING',
+  COMMENTS = 'COMMENTS',
+  PRODUCER = 'PRODUCER',
+  STOCK_DATE = 'STOCK_DATE',
+  DATE_CREATED = 'DATE_CREATED',
+  COUNTER = 'COUNTER',
+  FILENAME = 'FILENAME',
+  GENRE = 'GENRE',
+  KEY = 'KEY',
+  LABEL = 'LABEL',
+  MIX_NAME = 'MIX_NAME',
+  MYTAG = 'MYTAG',
+  RATING = 'RATING',
+  DATE_RELEASED = 'DATE_RELEASED',
+  REMIXED_BY = 'REMIXED_BY',
+  DURATION = 'DURATION',
+  NAME = 'NAME',
+  YEAR = 'YEAR'
+}
+
+export enum SmartListOperator {
+  EQUAL = 'EQUAL',
+  NOT_EQUAL = 'NOT_EQUAL',
+  GREATER = 'GREATER',
+  LESS = 'LESS',
+  IN_RANGE = 'IN_RANGE',
+  IN_LAST = 'IN_LAST',
+  NOT_IN_LAST = 'NOT_IN_LAST',
+  CONTAINS = 'CONTAINS',
+  NOT_CONTAINS = 'NOT_CONTAINS',
+  STARTS_WITH = 'STARTS_WITH',
+  ENDS_WITH = 'ENDS_WITH'
+}
+
+export interface SmartListCondition {
+  property: SmartListProperty;
+  operator: SmartListOperator;
+  value_left: string;
+  value_right?: string; // For BETWEEN operator
+}
+
+export enum SmartListLogicalOperator {
+  ALL = 1,
+  ANY = 2
+}
+
+export interface SmartList {
+  logical_operator: SmartListLogicalOperator;
+  conditions: SmartListCondition[];
 }
 
 export interface RekordboxLibrary {

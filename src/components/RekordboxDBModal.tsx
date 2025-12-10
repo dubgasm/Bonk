@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Database, Download, Upload, RefreshCw, Settings, X, CheckCircle, AlertCircle, Loader } from 'lucide-react';
+import { Database, Download, Upload, RefreshCw, Settings, X, CheckCircle, AlertCircle, Loader, Archive } from 'lucide-react';
 
 interface RekordboxDBModalProps {
   onClose: () => void;
@@ -129,6 +129,45 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
     } catch (error: any) {
       setStatus('error');
       setStatusMessage('Import error');
+      setDetailsMessage(error.message);
+    }
+  };
+
+  const handleBackupDB = async () => {
+    try {
+      if (!window.electronAPI) return;
+
+      setStatus('loading');
+      setStatusMessage('Creating database backup...');
+      setDetailsMessage('This may take a moment for large databases');
+
+      const result = await (window.electronAPI as any).rekordboxBackupDatabase?.(
+        customDbPath || null
+      );
+
+      if (result?.success) {
+        setStatus('success');
+        setStatusMessage('Database backup created successfully');
+
+        const backupPath = result.backup_path;
+        const backupCount = result.backup_count || 0;
+        let detailsMsg = `Backup created: ${backupPath}`;
+        if (backupCount > 0) {
+          detailsMsg += `\nTotal backups: ${backupCount} (keeps last 3)`;
+        }
+        setDetailsMessage(detailsMsg);
+
+        setTimeout(() => {
+          setStatus('idle');
+        }, 3000);
+      } else {
+        setStatus('error');
+        setStatusMessage('Backup failed');
+        setDetailsMessage(result?.error || 'Unknown error occurred');
+      }
+    } catch (error: any) {
+      setStatus('error');
+      setStatusMessage('Backup error');
       setDetailsMessage(error.message);
     }
   };
@@ -361,6 +400,16 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
             >
               <Download size={20} />
               Import from Database
+            </button>
+
+            <button
+              className="btn-secondary btn-large"
+              onClick={handleBackupDB}
+              disabled={status === 'loading'}
+              style={{ marginTop: '12px' }}
+            >
+              <Archive size={20} />
+              Backup Database
             </button>
           </div>
 

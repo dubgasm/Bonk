@@ -5,26 +5,22 @@ export interface TrackSearchResult {
   genre?: string;
   year?: number;
   label?: string;
-  albumArt?: string; // URL
   energy?: number; // 0-1
   danceability?: number; // 0-1
   popularity?: number; // 0-100
   happiness?: number; // 0-1
-  source: 'beatport' | 'spotify' | 'musicbrainz' | 'discogs';
+  source: 'spotify' | 'musicbrainz';
   confidence: number; // 0-1
 }
 
 export interface TagFinderOptions {
-  enableBeatport: boolean;
   enableSpotify: boolean;
   enableMusicBrainz: boolean;
-  enableDiscogs: boolean;
   originalRelease: boolean;
   updateGenre: boolean;
   updateYear: boolean;
   updateLabel: boolean;
   updateAlbum: boolean;
-  updateAlbumArt: boolean;
   updateEnergy: boolean;
   updateDanceability: boolean;
   updatePopularity: boolean;
@@ -32,27 +28,22 @@ export interface TagFinderOptions {
   // API Credentials
   spotifyClientId?: string;
   spotifyClientSecret?: string;
-  discogsToken?: string;
 }
 
 export const defaultTagFinderOptions: TagFinderOptions = {
-  enableBeatport: true,
   enableSpotify: true,
   enableMusicBrainz: true,
-  enableDiscogs: true,
   originalRelease: false,
   updateGenre: true,
   updateYear: true,
   updateLabel: true,
   updateAlbum: true,
-  updateAlbumArt: true,
   updateEnergy: false,
   updateDanceability: false,
   updatePopularity: false,
   updateHappiness: false,
   spotifyClientId: '',
   spotifyClientSecret: '',
-  discogsToken: '',
 };
 
 export interface TagFinderProgress {

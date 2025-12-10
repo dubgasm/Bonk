@@ -19,11 +19,14 @@ interface LibraryState {
   filterTracks: () => void;
   getSelectedTracksData: () => Track[];
   addTracksToPlaylist: (playlistName: string, trackIds: string[]) => void;
+  removeTracksFromPlaylist: (playlistName: string, trackIds: string[]) => void;
   createPlaylist: (name: string, parentPlaylist?: Playlist) => void;
   createFolder: (name: string, parentPlaylist?: Playlist) => void;
   renamePlaylist: (playlist: Playlist, newName: string) => void;
   deletePlaylist: (playlist: Playlist) => void;
   duplicatePlaylist: (playlist: Playlist) => void;
+  createSmartPlaylist: (name: string, conditions: any[], logicalOperator?: number, parent?: Playlist) => Promise<void>;
+  getSmartPlaylistContents: (playlistId: string) => Promise<any>;
   checkMissingTracks: () => Promise<void>;
   missingTracks: Set<string>;
   showMissingOnly: boolean;
@@ -31,6 +34,7 @@ interface LibraryState {
   deleteTracks: (trackIds: string[]) => void;
   renameTracks: (renames: { trackId: string; newName: string }[]) => void;
   convertTrackFormats: (conversions: { trackId: string; newKind: string; newLocation: string }[]) => void;
+  applySmartFixes: (trackIds: string[], fixes: any) => Promise<{ updated: number; errors: string[] }>;
 }
 
 export const useLibraryStore = create<LibraryState>((set, get) => ({
@@ -192,6 +196,35 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     set({ library: { ...library, playlists: updatedPlaylists } });
   },
 
+  removeTracksFromPlaylist: (playlistName: string, trackIds: string[]) => {
+    const { library } = get();
+    if (!library) return;
+
+    const trackIdsSet = new Set(trackIds);
+
+    const findAndUpdatePlaylist = (playlists: Playlist[]): Playlist[] => {
+      return playlists.map((playlist) => {
+        if (playlist.Name === playlistName && playlist.Type !== '0') {
+          // Remove tracks from playlist
+          return {
+            ...playlist,
+            Entries: (playlist.Entries || []).filter((id) => !trackIdsSet.has(id)),
+          };
+        }
+        if (playlist.Children) {
+          return {
+            ...playlist,
+            Children: findAndUpdatePlaylist(playlist.Children),
+          };
+        }
+        return playlist;
+      });
+    };
+
+    const updatedPlaylists = findAndUpdatePlaylist(library.playlists);
+    set({ library: { ...library, playlists: updatedPlaylists } });
+  },
+
   createPlaylist: (name: string, parentPlaylist?: Playlist) => {
     const { library } = get();
     if (!library) return;
@@ -329,6 +362,47 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     set({ library: { ...library, playlists: [...library.playlists, duplicate] } });
   },
 
+  createSmartPlaylist: async (name: string, conditions: any[], logicalOperator: number = 1, parent?: Playlist) => {
+    if (!window.electronAPI) return;
+
+    try {
+      const result = await (window.electronAPI as any).rekordboxCreateSmartPlaylist?.(
+        name,
+        conditions,
+        logicalOperator,
+        parent?.Name
+      );
+
+      if (result?.success) {
+        // Smart playlists are created in the Rekordbox database
+        // We don't need to update our local library state since they're dynamic
+        console.log('Smart playlist created:', result);
+      } else {
+        throw new Error(result?.error || 'Failed to create smart playlist');
+      }
+    } catch (error) {
+      console.error('Error creating smart playlist:', error);
+      throw error;
+    }
+  },
+
+  getSmartPlaylistContents: async (playlistId: string) => {
+    if (!window.electronAPI) return null;
+
+    try {
+      const result = await (window.electronAPI as any).rekordboxGetSmartPlaylistContents?.(playlistId);
+
+      if (result?.success) {
+        return result;
+      } else {
+        throw new Error(result?.error || 'Failed to get smart playlist contents');
+      }
+    } catch (error) {
+      console.error('Error getting smart playlist contents:', error);
+      throw error;
+    }
+  },
+
   checkMissingTracks: async () => {
     const { library } = get();
     if (!library || !window.electronAPI) return;
@@ -454,6 +528,37 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
     set({ library: { ...library, tracks: updatedTracks } });
     get().filterTracks();
+  },
+
+  applySmartFixes: async (trackIds: string[], fixes: any) => {
+    if (!window.electronAPI) {
+      throw new Error('Electron API not available');
+    }
+
+    try {
+      const result = await (window.electronAPI as any).applySmartFixes(trackIds, fixes);
+
+      if (result?.success) {
+        // Update the tracks in the library with the new data
+        const { library } = get();
+        if (library) {
+          const updatedTracks = library.tracks.map(track => {
+            const updatedTrack = result.updates.find((u: any) => u.TrackID === track.TrackID);
+            return updatedTrack || track;
+          });
+
+          set({ library: { ...library, tracks: updatedTracks } });
+          get().filterTracks();
+        }
+
+        return { updated: result.updated, errors: result.errors || [] };
+      } else {
+        throw new Error(result?.error || 'Failed to apply smart fixes');
+      }
+    } catch (error) {
+      console.error('Error applying smart fixes:', error);
+      throw error;
+    }
   },
 }));
 

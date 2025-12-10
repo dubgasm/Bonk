@@ -70,26 +70,6 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                 />
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label style={{ fontWeight: 500, fontSize: '14px' }}>
-                  Discogs Token (optional)
-                </label>
-                <input
-                  type="password"
-                  value={apiCredentials.discogsToken || ''}
-                  onChange={(e) => updateApiCredential('discogsToken', e.target.value)}
-                  placeholder="Optional: Discogs personal access token"
-                  style={{
-                    padding: '10px 12px',
-                    border: '1px solid var(--border)',
-                    borderRadius: '6px',
-                    background: 'var(--bg-secondary)',
-                    color: 'var(--text-primary)',
-                    fontSize: '14px',
-                    fontFamily: 'monospace'
-                  }}
-                />
-              </div>
             </div>
           </div>
 

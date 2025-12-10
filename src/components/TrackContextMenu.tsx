@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { FileEdit, CheckSquare, XSquare, Music, Search, RotateCcw } from 'lucide-react';
+import { FileEdit, CheckSquare, XSquare, Music, Search, RotateCcw, Trash2 } from 'lucide-react';
 
 interface TrackContextMenuProps {
   x: number;
@@ -13,6 +13,8 @@ interface TrackContextMenuProps {
   onSelectAll: () => void;
   onClearSelection: () => void;
   selectedCount: number;
+  selectedPlaylist?: any;
+  onRemoveFromPlaylist?: () => void;
 }
 
 export default function TrackContextMenu({
@@ -27,6 +29,8 @@ export default function TrackContextMenu({
   onSelectAll,
   onClearSelection,
   selectedCount,
+  selectedPlaylist,
+  onRemoveFromPlaylist,
 }: TrackContextMenuProps) {
   // If a track is provided (right-click), it's a single-track operation
   // Otherwise, it's a batch operation on selected tracks
@@ -111,6 +115,24 @@ export default function TrackContextMenu({
         <span>Discard Changes (Reload from File)</span>
         {operationCount > 0 && <span className="badge">{operationCount}</span>}
       </button>
+
+      {selectedPlaylist && onRemoveFromPlaylist && (
+        <>
+          <div className="context-menu-separator" />
+
+          <button
+            className="context-menu-item danger"
+            onClick={() => {
+              onRemoveFromPlaylist();
+              onClose();
+            }}
+          >
+            <Trash2 size={16} />
+            <span>Remove from Playlist</span>
+            {operationCount > 0 && <span className="badge">{operationCount}</span>}
+          </button>
+        </>
+      )}
 
       <div className="context-menu-separator" />
 

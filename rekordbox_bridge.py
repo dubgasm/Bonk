@@ -8,6 +8,7 @@ import sys
 import json
 import os
 import shutil
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -19,6 +20,7 @@ try:
     from pyrekordbox import Rekordbox6Database, RekordboxXml, show_config, update_config
     from pyrekordbox.config import __config__ as pyrekordbox_config, get_config
     from pyrekordbox.utils import get_rekordbox_pid
+    from pyrekordbox.db6.smartlist import SmartList, Property, Operator
 except ImportError as e:
     print(json.dumps({"success": False, "error": f"Failed to import pyrekordbox: {str(e)}"}))
     sys.exit(1)
@@ -136,31 +138,72 @@ class RekordboxBridge:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
-    def backup_database(self, db_path: str) -> Dict[str, Any]:
+    def backup_database(self, db_path: Optional[str] = None) -> Dict[str, Any]:
         """Backup the Rekordbox database file with rotation (keeps 3 backups)"""
         try:
-            if not db_path or not os.path.exists(db_path):
+            actual_db_path = None
+
+            if db_path:
+                # Verify the path exists
+                if not os.path.exists(db_path):
+                    return {
+                        "success": False,
+                        "error": f"Database file not found: {db_path}"
+                    }
+                actual_db_path = os.path.abspath(db_path)
+            else:
+                # Auto-detect database path like import function does
+                print("Auto-detecting database for backup...", file=sys.stderr)
+                try:
+                    # Temporarily open database to get path
+                    temp_db = Rekordbox6Database()
+
+                    # Get the actual path that was used
+                    if hasattr(temp_db, 'engine') and temp_db.engine:
+                        url = str(temp_db.engine.url)
+
+                        # Extract database path from SQLAlchemy URL
+                        # URL format: sqlite+pysqlcipher://:***@//Users/suhaas/Library/Pioneer/rekordbox/master.db
+                        if '@' in url:
+                            # Split on @ and take the part after it
+                            path_part = url.split('@', 1)[1].split('?')[0]
+
+                            # Handle double slash at start (remove one)
+                            if path_part.startswith('//'):
+                                path_part = path_part[1:]
+
+                            actual_db_path = os.path.abspath(path_part)
+
+                    temp_db.close()
+
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": f"Failed to auto-detect database: {str(e)}"
+                    }
+
+            if not actual_db_path or not os.path.exists(actual_db_path):
                 return {
                     "success": False,
-                    "error": f"Database file not found: {db_path}"
+                    "error": f"Database file not found: {actual_db_path}"
                 }
             
             # Create backup directory next to the database file
-            db_dir = os.path.dirname(db_path)
+            db_dir = os.path.dirname(actual_db_path)
             backup_dir = os.path.join(db_dir, "bonk_backups")
-            
+
             # Create backup directory if it doesn't exist
             os.makedirs(backup_dir, exist_ok=True)
-            
+
             # Generate backup filename with timestamp
-            db_filename = os.path.basename(db_path)
+            db_filename = os.path.basename(actual_db_path)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_filename = f"{db_filename}.backup_{timestamp}"
             backup_path = os.path.join(backup_dir, backup_filename)
-            
+
             # Copy the database file
             print(f"Creating backup: {backup_path}", file=sys.stderr)
-            shutil.copy2(db_path, backup_path)
+            shutil.copy2(actual_db_path, backup_path)
             
             # Get all backup files for this database
             backup_pattern = f"{db_filename}.backup_*"
@@ -1042,6 +1085,432 @@ class RekordboxBridge:
                 "error": f"Failed to update track path: {str(e)}"
             }
     
+    def create_smart_playlist(self, name: str, conditions: List[Dict], logical_operator: int = 1, parent: Optional[str] = None) -> Dict[str, Any]:
+        """Create a smart playlist with specified conditions"""
+        try:
+            # Open database if not already open
+            if not self.db:
+                result = self.open_database()
+                if not result["success"]:
+                    return result
+
+            # Create SmartList object
+            smart = SmartList(logical_operator=logical_operator)
+
+            # Add conditions
+            for condition in conditions:
+                property_name = condition.get("property")
+                operator_value = condition.get("operator")
+                value_left = condition.get("value_left")
+                value_right = condition.get("value_right")
+
+                # Map string property names to Property enum
+                property_enum = getattr(Property, property_name, None)
+                if not property_enum:
+                    return {
+                        "success": False,
+                        "error": f"Unknown property: {property_name}"
+                    }
+
+                # Map string operators to Operator enum
+                operator_enum = getattr(Operator, operator_value, None)
+                if operator_enum is None:
+                    return {
+                        "success": False,
+                        "error": f"Unknown operator: {operator_value}"
+                    }
+
+                # Add condition to smart list
+                if value_right:
+                    smart.add_condition(property_enum, operator_enum, value_left, value_right)
+                else:
+                    smart.add_condition(property_enum, operator_enum, value_left)
+
+            # Find parent if specified
+            parent_playlist = None
+            if parent:
+                try:
+                    parent_playlist = self.db.get_playlist(Name=parent).one_or_none()
+                except:
+                    pass
+
+            # Create the smart playlist
+            playlist = self.db.create_smart_playlist(name, smart, parent=parent_playlist)
+
+            return {
+                "success": True,
+                "playlist_id": str(playlist.ID),
+                "playlist_name": playlist.Name,
+                "message": f"Smart playlist '{name}' created successfully"
+            }
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            return {
+                "success": False,
+                "error": f"Failed to create smart playlist: {str(e)}"
+            }
+
+    def get_smart_playlist_contents(self, playlist_id: str) -> Dict[str, Any]:
+        """Get the contents of a smart playlist"""
+        try:
+            # Open database if not already open
+            if not self.db:
+                result = self.open_database()
+                if not result["success"]:
+                    return result
+
+            # Get the playlist
+            try:
+                playlist = self.db.get_playlist(ID=int(playlist_id)).one_or_none()
+            except:
+                return {
+                    "success": False,
+                    "error": f"Playlist not found: {playlist_id}"
+                }
+
+            if not playlist:
+                return {
+                    "success": False,
+                    "error": f"Playlist not found: {playlist_id}"
+                }
+
+            # Get playlist contents
+            contents = list(self.db.get_playlist_contents(playlist))
+
+            # Convert to our track format
+            tracks = []
+            for content in contents:
+                # Safely get key name
+                try:
+                    key_name = content.KeyName if content.Key else ""
+                except:
+                    key_name = ""
+
+                # Safely get remixer name
+                try:
+                    remixer_name = content.RemixerName if content.Remixer else ""
+                except:
+                    remixer_name = ""
+
+                # Rekordbox stores BPM multiplied by 100 (e.g., 128.5 BPM = 12850)
+                # Convert back to normal BPM by dividing by 100
+                bpm_value = None
+                if content.BPM is not None:
+                    bpm_value = content.BPM / 100.0
+
+                track = {
+                    "TrackID": str(content.ID),
+                    "Name": content.Title or "",
+                    "Artist": content.ArtistName or "",
+                    "Album": content.AlbumName or "",
+                    "Genre": content.GenreName or "",
+                    "Year": str(content.ReleaseYear) if content.ReleaseYear else "",
+                    "AverageBpm": str(bpm_value) if bpm_value is not None else "",
+                    "TotalTime": str(int(content.Length * 1000)) if content.Length else "",
+                    "BitRate": str(content.BitRate) if content.BitRate else "",
+                    "SampleRate": str(content.SampleRate) if content.SampleRate else "",
+                    "Comments": content.Commnt or "",
+                    "Rating": str(content.Rating) if content.Rating else "",
+                    "Location": f"file://localhost{content.FolderPath}",
+                    "Tonality": key_name,
+                    "Key": key_name,
+                    "Label": content.LabelName or "",
+                    "Remixer": remixer_name,
+                    "DateAdded": content.created_at.isoformat() if content.created_at else "",
+                    "PlayCount": str(content.DJPlayCount) if content.DJPlayCount else "",
+                    "Mix": content.Subtitle or "",
+                    "Color": str(content.ColorID) if content.ColorID else "",
+                }
+                tracks.append(track)
+
+            return {
+                "success": True,
+                "tracks": tracks,
+                "track_count": len(tracks),
+                "playlist_name": playlist.Name
+            }
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            return {
+                "success": False,
+                "error": f"Failed to get smart playlist contents: {str(e)}"
+            }
+
+    def apply_smart_fixes(self, track_ids: List[str], fixes: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply smart fixes to tracks"""
+        try:
+            # Open database if not already open
+            if not self.db:
+                result = self.open_database()
+                if not result["success"]:
+                    return result
+
+            # Get tracks to process
+            tracks_to_update = []
+            track_id_set = set(track_ids)
+
+            for content in self.db.get_content():
+                if str(content.ID) in track_id_set:
+                    tracks_to_update.append(content)
+
+            if not tracks_to_update:
+                return {
+                    "success": False,
+                    "error": "No tracks found to process"
+                }
+
+            updated_count = 0
+            updates = []
+
+            for content in tracks_to_update:
+                original_data = {
+                    'TrackID': str(content.ID),
+                    'Name': content.Title or '',
+                    'Artist': content.ArtistName or '',
+                    'Album': content.AlbumName or '',
+                    'Genre': content.GenreName or '',
+                    'Comments': content.Commnt or '',
+                    'Label': content.LabelName or '',
+                    'Remixer': ''  # Will be populated if we extract it
+                }
+
+                updated_data = original_data.copy()
+                track_changed = False
+
+                # Extract Artist From Title
+                if fixes.get('extractArtistEnabled'):
+                    separator = fixes.get('extractArtistSeparator', ' - ')
+                    result_number = fixes.get('extractArtistResultNumber', 1) - 1  # Convert to 0-based
+
+                    if updated_data['Name'] and separator in updated_data['Name']:
+                        parts = updated_data['Name'].split(separator)
+                        if 0 <= result_number < len(parts):
+                            extracted_artist = parts[result_number].strip()
+                            if extracted_artist and not updated_data['Artist']:
+                                updated_data['Artist'] = extracted_artist
+                                # Remove the extracted part from title
+                                parts.pop(result_number)
+                                updated_data['Name'] = separator.join(parts).strip()
+                                track_changed = True
+
+                # Replace Characters With Space
+                if fixes.get('replaceCharsEnabled'):
+                    chars_to_replace = fixes.get('replaceCharsList', '_')
+                    for char in chars_to_replace:
+                        for field in ['Name', 'Artist', 'Album', 'Genre', 'Comments', 'Label']:
+                            if updated_data[field]:
+                                updated_data[field] = updated_data[field].replace(char, ' ')
+                                track_changed = True
+
+                # Remove Garbage Characters
+                if fixes.get('removeGarbageEnabled'):
+                    fields_to_clean = fixes.get('removeGarbageFields', [])
+                    garbage_chars = r'^[\s\[\]\|\-]+|[\s\[\]\|\-]+$'
+
+                    for field in fields_to_clean:
+                        if field in updated_data and updated_data[field]:
+                            # Remove multiple spaces
+                            updated_data[field] = re.sub(r'\s+', ' ', updated_data[field])
+                            # Remove leading/trailing special chars
+                            updated_data[field] = re.sub(garbage_chars, '', updated_data[field])
+                            track_changed = True
+
+                # Add (Re)mix Parenthesis
+                if fixes.get('addRemixParenthesisEnabled'):
+                    fields_to_process = fixes.get('addRemixParenthesisFields', [])
+                    remix_pattern = r'\s*-\s*(.*?)(?:mix|remix|version|edit)$'
+
+                    for field in fields_to_process:
+                        if field in updated_data and updated_data[field]:
+                            match = re.search(remix_pattern, updated_data[field], re.IGNORECASE)
+                            if match and '(' not in updated_data[field]:
+                                remix_text = match.group(1).strip()
+                                # Remove the remix part from the field
+                                updated_data[field] = re.sub(remix_pattern, '', updated_data[field], flags=re.IGNORECASE).strip()
+                                # Add it in parentheses
+                                updated_data[field] += f' ({remix_text})'
+                                track_changed = True
+
+                # Extract Remixer
+                if fixes.get('extractRemixerEnabled'):
+                    if updated_data['Name']:
+                        # Look for patterns like (Artist Remix) or (Artist Extended Remix)
+                        remix_patterns = [
+                            r'\(([^)]+?)(?:extended|club|dance|radio)?\s*(?:remix|mix|version|edit)\)',
+                            r'\(([^)]+?)\s+(?:extended|club|dance|radio)?\s*(?:remix|mix|version|edit)\)'
+                        ]
+
+                        for pattern in remix_patterns:
+                            match = re.search(pattern, updated_data['Name'], re.IGNORECASE)
+                            if match:
+                                remixer = match.group(1).strip()
+                                # Filter out generic terms
+                                filter_words = ['original', 'radio', 'club', 'dance', 'extended']
+                                if not any(word in remixer.lower() for word in filter_words):
+                                    updated_data['Remixer'] = remixer
+                                    # Remove the remix info from title
+                                    updated_data['Name'] = re.sub(pattern, '', updated_data['Name'], flags=re.IGNORECASE).strip()
+                                    # Clean up extra parentheses
+                                    updated_data['Name'] = re.sub(r'\(\s*\)', '', updated_data['Name'])
+                                    updated_data['Name'] = re.sub(r'\s+', ' ', updated_data['Name']).strip()
+                                    track_changed = True
+                                    break
+
+                # Remove URLs
+                if fixes.get('removeUrlsEnabled'):
+                    fields_to_process = fixes.get('removeUrlsFields', [])
+                    url_pattern = r'https?://[^\s]+'
+
+                    for field in fields_to_process:
+                        if field in updated_data and updated_data[field]:
+                            if fixes.get('removeUrlsDeleteAll'):
+                                # Delete entire field if it contains a URL
+                                if re.search(url_pattern, updated_data[field]):
+                                    updated_data[field] = ''
+                                    track_changed = True
+                            else:
+                                # Just remove URLs
+                                original = updated_data[field]
+                                updated_data[field] = re.sub(url_pattern, '', updated_data[field]).strip()
+                                if original != updated_data[field]:
+                                    track_changed = True
+
+                # Fix Casing
+                if fixes.get('fixCasingEnabled'):
+                    fields_to_process = fixes.get('fixCasingFields', [])
+
+                    for field in fields_to_process:
+                        if field in updated_data and updated_data[field]:
+                            text = updated_data[field]
+                            # Check if it's ALL UPPERCASE or all lowercase
+                            if text.isupper() or text.islower():
+                                # Convert to title case
+                                updated_data[field] = text.title()
+                                track_changed = True
+
+                # Remove Number Prefix
+                if fixes.get('removeNumberPrefixEnabled'):
+                    fields_to_process = fixes.get('removeNumberPrefixFields', [])
+                    prefix_patterns = [
+                        r'^\d+\.\s*',  # 01.
+                        r'^\(\d+\)\s*',  # (01)
+                        r'^\d+\s*-\s*',  # 01 -
+                        r'^\[\d+\]\s*'   # [01]
+                    ]
+
+                    for field in fields_to_process:
+                        if field in updated_data and updated_data[field]:
+                            for pattern in prefix_patterns:
+                                updated_data[field] = re.sub(pattern, '', updated_data[field])
+                                track_changed = True
+
+                # Apply changes to the database
+                if track_changed:
+                    try:
+                        # Ensure data is clean before updating
+                        if updated_data['Name']:
+                            updated_data['Name'] = updated_data['Name'].strip()
+                        if updated_data['Artist']:
+                            updated_data['Artist'] = updated_data['Artist'].strip()
+                        if updated_data['Album']:
+                            updated_data['Album'] = updated_data['Album'].strip()
+                        if updated_data['Genre']:
+                            updated_data['Genre'] = updated_data['Genre'].strip()
+                        if updated_data['Comments']:
+                            updated_data['Comments'] = updated_data['Comments'].strip()
+                        if updated_data['Label']:
+                            updated_data['Label'] = updated_data['Label'].strip()
+
+                        # Update the database content
+                        if updated_data['Name'] != original_data['Name']:
+                            content.Title = updated_data['Name'] or None
+
+                        if updated_data['Artist'] != original_data['Artist']:
+                            # Find or create artist
+                            if updated_data['Artist'] and updated_data['Artist'].strip():
+                                try:
+                                    artist = self.db.get_artist(Name=updated_data['Artist']).one_or_none()
+                                    if not artist:
+                                        artist = self.db.add_artist(name=updated_data['Artist'], search_str=updated_data['Artist'].upper())
+                                    if artist and artist.ID:
+                                        content.ArtistID = int(artist.ID)
+                                except Exception as e:
+                                    print(f"Error updating artist for track {content.ID}: {e}", file=sys.stderr)
+
+                        if updated_data['Album'] != original_data['Album']:
+                            # Find or create album
+                            if updated_data['Album'] and updated_data['Album'].strip():
+                                try:
+                                    album = self.db.get_album(Name=updated_data['Album']).one_or_none()
+                                    if not album:
+                                        album = self.db.add_album(name=updated_data['Album'])
+                                    if album and album.ID:
+                                        content.AlbumID = int(album.ID)
+                                except Exception as e:
+                                    print(f"Error updating album for track {content.ID}: {e}", file=sys.stderr)
+
+                        if updated_data['Genre'] != original_data['Genre']:
+                            # Find or create genre
+                            if updated_data['Genre'] and updated_data['Genre'].strip():
+                                try:
+                                    genre = self.db.get_genre(Name=updated_data['Genre']).one_or_none()
+                                    if not genre:
+                                        genre = self.db.add_genre(name=updated_data['Genre'])
+                                    if genre and genre.ID:
+                                        content.GenreID = int(genre.ID)
+                                except Exception as e:
+                                    print(f"Error updating genre for track {content.ID}: {e}", file=sys.stderr)
+
+                        if updated_data['Comments'] != original_data['Comments']:
+                            content.Commnt = updated_data['Comments'] or None
+
+                        if updated_data['Label'] != original_data['Label']:
+                            content.LabelName = updated_data['Label'] or None
+
+                        updated_count += 1
+                        updates.append(updated_data)
+
+                    except Exception as e:
+                        print(f"Error updating track {content.ID}: {e}", file=sys.stderr)
+                        continue
+
+            # Commit changes
+            if updated_count > 0:
+                try:
+                    self.db.commit()
+                    print(f"Committed {updated_count} smart fix updates", file=sys.stderr)
+                except Exception as e:
+                    print(f"Error committing changes: {e}", file=sys.stderr)
+                    # Try to rollback on error
+                    try:
+                        self.db.rollback()
+                        print("Rolled back transaction due to commit error", file=sys.stderr)
+                    except Exception as rollback_error:
+                        print(f"Error rolling back: {rollback_error}", file=sys.stderr)
+                    return {
+                        "success": False,
+                        "error": f"Failed to commit changes: {str(e)}"
+                    }
+
+            return {
+                "success": True,
+                "updated": updated_count,
+                "updates": updates,
+                "errors": []
+            }
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            return {
+                "success": False,
+                "error": f"Failed to apply smart fixes: {str(e)}"
+            }
+    
     def export_to_xml(self, tracks: List[Dict], playlists: List[Dict], output_path: str) -> Dict[str, Any]:
         """Export library to Rekordbox XML using pyrekordbox"""
         try:
@@ -1125,6 +1594,10 @@ def main():
             db_path = sys.argv[2] if len(sys.argv) > 2 else None
             result = bridge.import_from_database(db_path)
         
+        elif command == "backup-database":
+            db_path = sys.argv[2] if len(sys.argv) > 2 else None
+            result = bridge.backup_database(db_path)
+        
         elif command == "export-database":
             if len(sys.argv) < 3:
                 result = {"success": False, "error": "Missing library data"}
@@ -1200,6 +1673,64 @@ def main():
                     db_path = None
                 result = bridge.update_track_path(track_id, new_path, old_path, db_path)
         
+        elif command == "create-smart-playlist":
+            if len(sys.argv) < 4:
+                result = {"success": False, "error": "Missing arguments: name and conditions required"}
+            else:
+                name = sys.argv[2]
+                conditions_json = sys.argv[3]
+                logical_operator = int(sys.argv[4]) if len(sys.argv) > 4 else 1
+                parent = sys.argv[5] if len(sys.argv) > 5 else None
+                if parent == "":
+                    parent = None
+
+                try:
+                    conditions = json.loads(conditions_json)
+                    result = bridge.create_smart_playlist(name, conditions, logical_operator, parent)
+                except json.JSONDecodeError as e:
+                    result = {"success": False, "error": f"Invalid conditions JSON: {str(e)}"}
+
+        elif command == "create-smart-playlist-from-file":
+            if len(sys.argv) < 3:
+                result = {"success": False, "error": "Missing file argument"}
+            else:
+                file_path = sys.argv[2]
+                try:
+                    with open(file_path, 'r') as f:
+                        data = json.load(f)
+
+                    name = data['name']
+                    conditions = data['conditions']
+                    logical_operator = data.get('logical_operator', 1)
+                    parent = data.get('parent')
+
+                    result = bridge.create_smart_playlist(name, conditions, logical_operator, parent)
+                except Exception as e:
+                    result = {"success": False, "error": f"Failed to read file or create playlist: {str(e)}"}
+
+        elif command == "get-smart-playlist-contents":
+            if len(sys.argv) < 3:
+                result = {"success": False, "error": "Missing playlist ID"}
+            else:
+                playlist_id = sys.argv[2]
+                result = bridge.get_smart_playlist_contents(playlist_id)
+
+        elif command == "apply-smart-fixes":
+            if len(sys.argv) < 3:
+                result = {"success": False, "error": "Missing file argument"}
+            else:
+                file_path = sys.argv[2]
+                try:
+                    with open(file_path, 'r') as f:
+                        data = json.load(f)
+
+                    track_ids = data['trackIds']
+                    fixes = data['fixes']
+
+                    result = bridge.apply_smart_fixes(track_ids, fixes)
+                except Exception as e:
+                    result = {"success": False, "error": f"Failed to read file or apply fixes: {str(e)}"}
+
         else:
             result = {"success": False, "error": f"Unknown command: {command}"}
         

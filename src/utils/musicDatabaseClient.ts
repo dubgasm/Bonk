@@ -84,7 +84,6 @@ export class MusicDatabaseClient {
         artist: track.artists[0]?.name || artist,
         album: track.album?.name,
         year: track.album?.release_date ? parseInt(track.album.release_date.substring(0, 4)) : undefined,
-        albumArt: track.album?.images?.[0]?.url,
         genre: undefined, // Spotify doesn't provide genre at track level
         energy: audioFeatures?.energy,
         danceability: audioFeatures?.danceability,
@@ -99,90 +98,31 @@ export class MusicDatabaseClient {
     }
   }
 
-  // Search Beatport (requires scraping or API access)
-  async searchBeatport(_artist: string, _title: string): Promise<TrackSearchResult | null> {
-    // Beatport doesn't have a public API
-    // In production, you'd need to implement web scraping or use unofficial APIs
-    // For now, returning null
-    console.log('Beatport search not implemented (requires API access)');
-    return null;
-  }
 
-  // Search Discogs (free API, but requires API key)
-  async searchDiscogs(artist: string, title: string, apiKey?: string): Promise<TrackSearchResult | null> {
-    if (!apiKey) {
-      return null;
-    }
-    
-    try {
-      const query = encodeURIComponent(`${artist} ${title}`);
-      const url = `https://api.discogs.com/database/search?q=${query}&type=release&token=${apiKey}`;
-      
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Bonk/1.0.0'
-        }
-      });
-      
-      if (!response.ok) return null;
-      
-      const data = await response.json();
-      if (!data.results || data.results.length === 0) return null;
-      
-      const result = data.results[0];
-      
-      return {
-        title: result.title || title,
-        artist: artist,
-        album: result.title,
-        year: parseInt(result.year) || undefined,
-        label: result.label?.[0],
-        albumArt: result.cover_image,
-        genre: result.genre?.[0],
-        source: 'discogs',
-        confidence: 0.6,
-      };
-    } catch (error) {
-      console.error('Discogs search error:', error);
-      return null;
-    }
-  }
-
-  // Main search function that tries all sources in priority order
+  // Main search function that tries Spotify and MusicBrainz
   async searchAllSources(
     artist: string,
     title: string,
     options: {
-      enableBeatport?: boolean;
       enableSpotify?: boolean;
       enableMusicBrainz?: boolean;
-      enableDiscogs?: boolean;
       spotifyToken?: string;
-      discogsToken?: string;
     }
   ): Promise<TrackSearchResult | null> {
     const sources = [];
     
-    if (options.enableBeatport) sources.push('beatport');
     if (options.enableSpotify) sources.push('spotify');
     if (options.enableMusicBrainz) sources.push('musicbrainz');
-    if (options.enableDiscogs) sources.push('discogs');
     
     for (const source of sources) {
       let result: TrackSearchResult | null = null;
       
       switch (source) {
-        case 'beatport':
-          result = await this.searchBeatport(artist, title);
-          break;
         case 'spotify':
           result = await this.searchSpotify(artist, title, options.spotifyToken);
           break;
         case 'musicbrainz':
           result = await this.searchMusicBrainz(artist, title);
-          break;
-        case 'discogs':
-          result = await this.searchDiscogs(artist, title, options.discogsToken);
           break;
       }
       
@@ -194,19 +134,6 @@ export class MusicDatabaseClient {
     return null;
   }
 
-  // Download album art
-  async downloadAlbumArt(url: string): Promise<Buffer | null> {
-    try {
-      const response = await fetch(url);
-      if (!response.ok) return null;
-      
-      const arrayBuffer = await response.arrayBuffer();
-      return Buffer.from(arrayBuffer);
-    } catch (error) {
-      console.error('Failed to download album art:', error);
-      return null;
-    }
-  }
 }
 
 export const musicDatabaseClient = new MusicDatabaseClient();

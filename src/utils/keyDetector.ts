@@ -130,12 +130,15 @@ export function normalizeKey(key: string): string {
   
   // Try to parse with Tonal
   try {
-    const majorParsed = Key.majorKey(key);
+    // Prefer minor if it parses, otherwise fall back to major
     const minorParsed = Key.minorKey(key);
-    const parsed = majorParsed || minorParsed;
-    if (parsed && parsed.tonic) {
-      const isMinor = minorParsed !== null;
-      return parsed.tonic + (isMinor ? 'm' : '');
+    if (minorParsed && minorParsed.tonic) {
+      return `${minorParsed.tonic}m`;
+    }
+
+    const majorParsed = Key.majorKey(key);
+    if (majorParsed && majorParsed.tonic) {
+      return majorParsed.tonic;
     }
   } catch (e) {
     // Fallback to manual parsing

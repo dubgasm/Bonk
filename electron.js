@@ -170,9 +170,9 @@ function createWindow() {
   });
 
   // Determine if we should use dev server or production build
-  // Check if dist folder exists and NODE_ENV is production, or if app is packaged
+  // Dev if not packaged and NODE_ENV !== production (even if dist exists)
   const distPath = path.join(__dirname, 'dist/renderer/index.html');
-  const isDev = process.env.NODE_ENV !== 'production' && !app.isPackaged && !require('fs').existsSync(distPath);
+  const isDev = process.env.NODE_ENV !== 'production' && !app.isPackaged;
   
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173');
@@ -945,17 +945,19 @@ ipcMain.handle('find-tags', async (event, tracks, options) => {
                 });
 
                 if (artResponse.data) {
+                  const buffer = Buffer.from(artResponse.data);
                   if (!sharp) {
-                    console.error('Sharp is not available, skipping image optimization');
-                    continue;
+                    console.error('Sharp is not available, skipping optimization but keeping album art');
+                    updatedData.AlbumArt = `data:image/jpeg;base64,${buffer.toString('base64')}`;
+                    foundData.albumArt = true;
+                  } else {
+                    const optimizedImage = await sharp(buffer)
+                      .resize(500, 500, { fit: 'cover' })
+                      .jpeg({ quality: 90 })
+                      .toBuffer();
+                    updatedData.AlbumArt = `data:image/jpeg;base64,${optimizedImage.toString('base64')}`;
+                    foundData.albumArt = true;
                   }
-                  const optimizedImage = await sharp(Buffer.from(artResponse.data))
-                    .resize(500, 500, { fit: 'cover' })
-                    .jpeg({ quality: 90 })
-                    .toBuffer();
-
-                  updatedData.AlbumArt = `data:image/jpeg;base64,${optimizedImage.toString('base64')}`;
-                  foundData.albumArt = true;
                   console.log(`  ✓ Downloaded album art from Spotify`);
                 }
               } catch (artError) {
@@ -1041,22 +1043,24 @@ ipcMain.handle('find-tags', async (event, tracks, options) => {
 
                   // Resize and optimize image, convert to base64 for in-memory storage
                   try {
+                    const buffer = Buffer.from(artResponse.data);
+                    let processed = buffer;
                     if (!sharp) {
-                      console.error('Sharp is not available, skipping image optimization');
-                      continue;
+                      console.error('Sharp is not available, skipping optimization but keeping album art');
+                    } else {
+                      processed = await Promise.race([
+                        sharp(buffer)
+                          .resize(500, 500, { fit: 'cover' })
+                          .jpeg({ quality: 90 })
+                          .toBuffer(),
+                        new Promise((_, reject) => 
+                          setTimeout(() => reject(new Error('Image processing timeout')), 10000)
+                        )
+                      ]);
                     }
-                    const optimizedImage = await Promise.race([
-                      sharp(Buffer.from(artResponse.data))
-                        .resize(500, 500, { fit: 'cover' })
-                        .jpeg({ quality: 90 })
-                        .toBuffer(),
-                      new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Image processing timeout')), 10000)
-                      )
-                    ]);
 
                     // Store as base64 for display in UI (not writing to file yet)
-                    updatedData.AlbumArt = `data:image/jpeg;base64,${optimizedImage.toString('base64')}`;
+                    updatedData.AlbumArt = `data:image/jpeg;base64,${processed.toString('base64')}`;
                     foundData.albumArt = true;
                     console.log(`  ✓ Downloaded and processed album art from MusicBrainz`);
                   } catch (imgError) {
@@ -1189,6 +1193,38 @@ ipcMain.handle('rekordbox-import-database', async (_, dbPath) => {
   }
 });
 
+ipcMain.handle('rekordbox-backup-database', async (_, dbPath) => {
+  try {
+    console.log('📀 Backing up Rekordbox database...');
+    const pythonPath = 'python3';
+    const bridgePath = getRekordboxBridgePath();
+
+    const command = dbPath
+      ? `${pythonPath} "${bridgePath}" backup-database "${dbPath}"`
+      : `${pythonPath} "${bridgePath}" backup-database`;
+
+    console.log('Running command:', command);
+    const { stdout, stderr } = await execAsync(command);
+
+    if (stderr) {
+      console.warn('Python stderr:', stderr);
+    }
+
+    const result = JSON.parse(stdout);
+    if (result.success) {
+      console.log(`✓ Database backed up to: ${result.backup_path}`);
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Rekordbox backup error:', error);
+    return {
+      success: false,
+      error: `Failed to backup Rekordbox database: ${error.message}`
+    };
+  }
+});
+
 ipcMain.handle('rekordbox-export-database', async (_, library, dbPath, syncMode) => {
   try {
     console.log('📀 Exporting to Rekordbox database...');
@@ -1265,6 +1301,138 @@ ipcMain.handle('rekordbox-sync-database', async (_, library, dbPath) => {
   }
 });
 
+ipcMain.handle('rekordbox-create-smart-playlist', async (_, name, conditions, logicalOperator, parent) => {
+  try {
+    console.log('🎵 Creating smart playlist...');
+    const pythonPath = 'python3';
+    const bridgePath = getRekordboxBridgePath();
+
+    // Write conditions to temp file to avoid command line issues
+    const tempFile = path.join(require('os').tmpdir(), `bonk_smart_playlist_${Date.now()}.json`);
+    await fs.writeFile(tempFile, JSON.stringify({
+      name,
+      conditions,
+      logical_operator: logicalOperator || 1,
+      parent
+    }));
+
+    const command = `${pythonPath} "${bridgePath}" create-smart-playlist-from-file "${tempFile}"`;
+
+    const { stdout, stderr } = await execAsync(command);
+
+    // Clean up temp file
+    await fs.unlink(tempFile);
+
+    if (stderr) {
+      console.warn('Python stderr:', stderr);
+    }
+
+    const result = JSON.parse(stdout);
+    if (result.success) {
+      console.log(`✓ Smart playlist created: ${result.playlist_name}`);
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Rekordbox smart playlist creation error:', error);
+    return {
+      success: false,
+      error: `Failed to create smart playlist: ${error.message}`
+    };
+  }
+});
+
+ipcMain.handle('rekordbox-get-smart-playlist-contents', async (_, playlistId) => {
+  try {
+    console.log('🎵 Getting smart playlist contents...');
+    const pythonPath = 'python3';
+    const bridgePath = getRekordboxBridgePath();
+
+    const command = `${pythonPath} "${bridgePath}" get-smart-playlist-contents "${playlistId}"`;
+
+    console.log('Running command:', command);
+    const { stdout, stderr } = await execAsync(command);
+
+    if (stderr) {
+      console.warn('Python stderr:', stderr);
+    }
+
+    const result = JSON.parse(stdout);
+    if (result.success) {
+      console.log(`✓ Retrieved ${result.track_count} tracks from smart playlist`);
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Rekordbox smart playlist contents error:', error);
+    return {
+      success: false,
+      error: `Failed to get smart playlist contents: ${error.message}`
+    };
+  }
+});
+
+ipcMain.handle('apply-smart-fixes', async (_, trackIds, fixes) => {
+  try {
+    console.log('🎯 Applying smart fixes...');
+    const pythonPath = 'python3';
+    const bridgePath = getRekordboxBridgePath();
+
+    // Write fixes config to temp file to avoid command line issues
+    const tempFile = path.join(require('os').tmpdir(), `bonk_smart_fixes_${Date.now()}.json`);
+    await fs.writeFile(tempFile, JSON.stringify({
+      trackIds,
+      fixes
+    }));
+
+    const command = `${pythonPath} "${bridgePath}" apply-smart-fixes "${tempFile}"`;
+
+    const { stdout, stderr } = await execAsync(command);
+
+    // Clean up temp file
+    await fs.unlink(tempFile);
+
+    if (stderr) {
+      console.warn('Python stderr:', stderr);
+    }
+
+    const result = JSON.parse(stdout);
+    if (result.success) {
+      console.log(`✓ Applied smart fixes to ${result.updated} tracks`);
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Smart fixes error:', error);
+    return {
+      success: false,
+      error: `Failed to apply smart fixes: ${error.message}`
+    };
+  }
+});
+
+ipcMain.handle('locate-missing-file', async (_, trackName) => {
+  try {
+    const result = await dialog.showOpenDialog({
+      title: `Locate file for: ${trackName}`,
+      properties: ['openFile'],
+      filters: [
+        { name: 'Audio Files', extensions: ['mp3', 'wav', 'aiff', 'flac', 'm4a', 'ogg'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return result.filePaths[0];
+  } catch (error) {
+    console.error('Error locating file:', error);
+    return null;
+  }
+});
+
 ipcMain.handle('rekordbox-select-database', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
@@ -1307,24 +1475,72 @@ ipcMain.handle('write-tags', async (_, tracks, settings) => {
         try {
           console.log('\n--- Processing:', track.Name);
           
-          // Parse file location
+          // Parse file location with improved Rekordbox path handling
           let filePath = track.Location;
-          
+
           if (!filePath) {
             console.error('No location for track');
-            errors.push(`No file location: ${track.Name}`);
+            errors.push(`No file location: ${track.Name} - This track was imported from Rekordbox but the audio file path is not available. Try re-importing from Rekordbox or manually locating the file.`);
             processedCount++;
             continue;
           }
-          
+
+          console.log('Original location:', filePath);
+
+          // Handle various file path formats
           if (filePath.startsWith('file://localhost/')) {
             filePath = filePath.replace('file://localhost/', '/');
           } else if (filePath.startsWith('file://')) {
             filePath = filePath.replace('file://', '');
           }
+
           filePath = decodeURIComponent(filePath);
-          
-          console.log('File path:', filePath);
+
+          // For Rekordbox imports, the path might be relative or need path expansion
+          // Try multiple path resolution strategies
+          const pathCandidates = [filePath];
+
+          // If it's a relative path, try resolving relative to common music directories
+          if (!path.isAbsolute(filePath)) {
+            const homeDir = require('os').homedir();
+            const musicDirs = [
+              path.join(homeDir, 'Music'),
+              path.join(homeDir, 'Documents', 'Rekordbox'),
+              path.join(homeDir, 'Desktop'),
+              path.join(homeDir, 'Downloads'),
+              '/Volumes', // For external drives on macOS
+              '/Users/Shared' // Common shared location
+            ];
+
+            for (const musicDir of musicDirs) {
+              if (require('fs').existsSync(musicDir)) {
+                pathCandidates.push(path.resolve(musicDir, filePath));
+              }
+            }
+          }
+
+          // Try to find a valid path
+          let validPath = null;
+          for (const candidatePath of pathCandidates) {
+            try {
+              await fs.access(candidatePath);
+              validPath = candidatePath;
+              console.log('✓ Found file at:', candidatePath);
+              break;
+            } catch {
+              // Path doesn't exist, try next candidate
+            }
+          }
+
+          if (!validPath) {
+            console.error('File not found at any candidate path');
+            console.error('Tried paths:', pathCandidates);
+            errors.push(`File not found: ${track.Name} - Could not locate the audio file. The file may have been moved, renamed, or deleted. Try using the file locator to manually find this track.`);
+            processedCount++;
+            continue;
+          }
+
+          filePath = validPath;
 
           // Check if file exists
           try {

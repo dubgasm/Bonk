@@ -8,6 +8,7 @@ interface SettingsState extends AppSettings {
   updateTagWriteSetting: (field: keyof AppSettings['tagWriteSettings'], value: boolean) => void;
   updateApiCredential: (field: keyof ApiCredentials, value: string) => void;
   setLastSyncDate: (date: string) => void;
+  setSkipPlaylistRemovalConfirm: (skip: boolean) => void;
   resetSettings: () => void;
 }
 
@@ -53,6 +54,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   setLastSyncDate: (date) =>
     set({ lastSyncDate: date }),
+
+  setSkipPlaylistRemovalConfirm: (skip) =>
+    set({ skipPlaylistRemovalConfirm: skip }),
 
   resetSettings: () => set(defaultSettings),
 }));

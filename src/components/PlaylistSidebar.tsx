@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { ChevronRight, ChevronDown, Folder, List, Music, X, Plus, PanelLeftClose, PanelLeftOpen, AlertTriangle, Trash2 } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, List, Music, X, Plus, PanelLeftClose, PanelLeftOpen, AlertTriangle, Trash2, Sparkles } from 'lucide-react';
 import { Playlist } from '../types/track';
 import PlaylistContextMenu from './PlaylistContextMenu';
+import SmartPlaylistModal from './SmartPlaylistModal';
 
 interface PlaylistSidebarProps {
   playlists: Playlist[];
@@ -15,6 +16,7 @@ interface PlaylistSidebarProps {
   onRenamePlaylist: (playlist: Playlist, newName: string) => void;
   onDeletePlaylist: (playlist: Playlist) => void;
   onDuplicatePlaylist: (playlist: Playlist) => void;
+  onCreateSmartPlaylist: (name: string, conditions: any[], logicalOperator?: number) => Promise<void>;
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
   showMissingOnly: boolean;
@@ -160,6 +162,7 @@ export default function PlaylistSidebar({
   onRenamePlaylist,
   onDeletePlaylist,
   onDuplicatePlaylist,
+  onCreateSmartPlaylist,
   isCollapsed = false,
   onToggleCollapse,
   showMissingOnly,
@@ -170,6 +173,7 @@ export default function PlaylistSidebar({
   const [contextMenu, setContextMenu] = useState<{ playlist: Playlist; x: number; y: number } | null>(null);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
   const [editName, setEditName] = useState('');
+  const [showSmartPlaylistModal, setShowSmartPlaylistModal] = useState(false);
 
   const handleAllTracksClick = () => {
     onPlaylistSelect(null);
@@ -251,6 +255,13 @@ export default function PlaylistSidebar({
                 title="New Playlist"
               >
                 <Plus size={16} />
+              </button>
+              <button
+                className="playlist-sidebar-btn"
+                onClick={() => setShowSmartPlaylistModal(true)}
+                title="New Smart Playlist"
+              >
+                <Sparkles size={16} />
               </button>
               {onClose && (
                 <button className="playlist-sidebar-close" onClick={onClose}>
@@ -387,6 +398,14 @@ export default function PlaylistSidebar({
             </div>
           </div>
         </div>
+      )}
+
+      {showSmartPlaylistModal && (
+        <SmartPlaylistModal
+          isOpen={showSmartPlaylistModal}
+          onClose={() => setShowSmartPlaylistModal(false)}
+          onCreate={onCreateSmartPlaylist}
+        />
       )}
     </div>
   );

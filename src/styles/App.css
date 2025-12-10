@@ -493,14 +493,6 @@ body {
   width: 40px;
 }
 
-.album-art-thumb {
-  width: 32px;
-  height: 32px;
-  object-fit: cover;
-  border-radius: 2px;
-  display: block;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-}
 
 .album-art-placeholder {
   width: 32px;
@@ -2290,6 +2282,42 @@ body {
 }
 
 /* Drag & Drop States */
+.app.drag-over {
+  background: rgba(29, 185, 84, 0.1);
+  position: relative;
+}
+
+.app.drag-over::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border: 3px dashed var(--accent);
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.app.drag-over::after {
+  content: 'Drop files or folders here to import';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--bg-primary);
+  color: var(--accent);
+  padding: 20px 40px;
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: 500;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  z-index: 1001;
+  pointer-events: none;
+  border: 2px solid var(--accent);
+}
+
 .playlist-item.drag-over {
   background: rgba(29, 185, 84, 0.2);
   border: 2px dashed var(--accent);

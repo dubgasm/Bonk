@@ -22,10 +22,53 @@ export default function DuplicateDetectionModal({
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
   const [isScanning, setIsScanning] = useState(true);
 
+  // Helper functions (hoisted to avoid TDZ issues inside useMemo)
+  const normalizeTrackName = (name: string): string => {
+    return name
+      .toLowerCase()
+      .trim()
+      .replace(/^\d+\s*[-.\s]+\s*/, '')
+      .trim();
+  };
+
+  const getFileExtension = (location: string): string => {
+    const match = location.match(/\.([^.]+)$/);
+    return match ? match[1].toLowerCase() : '';
+  };
+
+  const countMetadataFields = (track: Track): number => {
+    let count = 0;
+    if (track.Name && track.Name.trim()) count++;
+    if (track.Artist && track.Artist.trim()) count++;
+    if (track.Album && track.Album.trim()) count++;
+    if (track.Genre && track.Genre.trim()) count++;
+    if (track.Year && track.Year.trim()) count++;
+    if (track.AverageBpm && track.AverageBpm.trim()) count++;
+    if (track.Key && track.Key.trim()) count++;
+    if (track.Comments && track.Comments.trim()) count++;
+    if (track.Rating && track.Rating.trim()) count++;
+    if (track.Label && track.Label.trim()) count++;
+    if (track.Remixer && track.Remixer.trim()) count++;
+    if (track.Mix && track.Mix.trim()) count++;
+    if (track.Grouping && track.Grouping.trim()) count++;
+    if (track.Tonality && track.Tonality.trim()) count++;
+    if (track.BitRate && track.BitRate.trim()) count++;
+    if (track.SampleRate && track.SampleRate.trim()) count++;
+    if (track.TotalTime && track.TotalTime.trim()) count++;
+    if (track.CatalogNumber && track.CatalogNumber.trim()) count++;
+    if (track.Publisher && track.Publisher.trim()) count++;
+    if (track.Writers && track.Writers.trim()) count++;
+    if (track.Producers && track.Producers.trim()) count++;
+    if (track.FeaturedArtists && track.FeaturedArtists.trim()) count++;
+    if (track.ISRC && track.ISRC.trim()) count++;
+    if (track.ReleaseDate && track.ReleaseDate.trim()) count++;
+    if (track.MixName && track.MixName.trim()) count++;
+    // Skip album art entirely to avoid loading it
+    return count;
+  };
+
   // Memoize duplicate detection to avoid re-scanning unnecessarily
   const duplicateGroupsMemo = useMemo(() => {
-    setIsScanning(true);
-    
     // Pre-compute format priorities and metadata counts for better performance
     const formatPriorityCache = new Map<string, number>();
     const getFormatPriority = (ext: string): number => {
@@ -120,62 +163,6 @@ export default function DuplicateDetectionModal({
     setDuplicateGroups(duplicateGroupsMemo);
     setIsScanning(false);
   }, [duplicateGroupsMemo]);
-
-  const normalizeTrackName = (name: string): string => {
-    // Remove leading numbers and dashes/spaces
-    // Handles: "01 - Title", "1 - Title", "01.Title", "01 Title", etc.
-    return name
-      .toLowerCase()
-      .trim()
-      .replace(/^\d+\s*[-.\s]+\s*/, '') // Remove leading number and separator
-      .trim();
-  };
-
-  const getFileExtension = (location: string): string => {
-    const match = location.match(/\.([^.]+)$/);
-    return match ? match[1].toLowerCase() : '';
-  };
-
-  const countMetadataFields = (track: Track): number => {
-    // Count non-empty metadata fields
-    let count = 0;
-    
-    // Basic fields
-    if (track.Name && track.Name.trim()) count++;
-    if (track.Artist && track.Artist.trim()) count++;
-    if (track.Album && track.Album.trim()) count++;
-    if (track.Genre && track.Genre.trim()) count++;
-    if (track.Year && track.Year.trim()) count++;
-    if (track.AverageBpm && track.AverageBpm.trim()) count++;
-    if (track.Key && track.Key.trim()) count++;
-    if (track.Comments && track.Comments.trim()) count++;
-    if (track.Rating && track.Rating.trim()) count++;
-    if (track.Label && track.Label.trim()) count++;
-    if (track.Remixer && track.Remixer.trim()) count++;
-    if (track.Mix && track.Mix.trim()) count++;
-    if (track.Grouping && track.Grouping.trim()) count++;
-    if (track.Tonality && track.Tonality.trim()) count++;
-    
-    // Technical fields
-    if (track.BitRate && track.BitRate.trim()) count++;
-    if (track.SampleRate && track.SampleRate.trim()) count++;
-    if (track.TotalTime && track.TotalTime.trim()) count++;
-    
-    // Enhanced metadata
-    if (track.CatalogNumber && track.CatalogNumber.trim()) count++;
-    if (track.Publisher && track.Publisher.trim()) count++;
-    if (track.Writers && track.Writers.trim()) count++;
-    if (track.Producers && track.Producers.trim()) count++;
-    if (track.FeaturedArtists && track.FeaturedArtists.trim()) count++;
-    if (track.ISRC && track.ISRC.trim()) count++;
-    if (track.ReleaseDate && track.ReleaseDate.trim()) count++;
-    if (track.MixName && track.MixName.trim()) count++;
-    
-    // Album art counts as metadata
-    if (track.AlbumArt) count += 2; // Album art is valuable
-    
-    return count;
-  };
 
   const handleDeleteDuplicates = () => {
     const allDeleteIds = duplicateGroups.flatMap(group => 

@@ -20,9 +20,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   rekordboxGetConfig: () => ipcRenderer.invoke('rekordbox-get-config'),
   rekordboxSetConfig: (installDir, appDir) => ipcRenderer.invoke('rekordbox-set-config', installDir, appDir),
   rekordboxImportDatabase: (dbPath) => ipcRenderer.invoke('rekordbox-import-database', dbPath),
+  rekordboxBackupDatabase: (dbPath) => ipcRenderer.invoke('rekordbox-backup-database', dbPath),
   rekordboxExportDatabase: (library, dbPath, syncMode) => ipcRenderer.invoke('rekordbox-export-database', library, dbPath, syncMode),
   rekordboxSyncDatabase: (library, dbPath) => ipcRenderer.invoke('rekordbox-sync-database', library, dbPath),
   rekordboxSelectDatabase: () => ipcRenderer.invoke('rekordbox-select-database'),
+  rekordboxCreateSmartPlaylist: (name, conditions, logicalOperator, parent) => ipcRenderer.invoke('rekordbox-create-smart-playlist', name, conditions, logicalOperator, parent),
+  rekordboxGetSmartPlaylistContents: (playlistId) => ipcRenderer.invoke('rekordbox-get-smart-playlist-contents', playlistId),
+  applySmartFixes: (trackIds, fixes) => ipcRenderer.invoke('apply-smart-fixes', trackIds, fixes),
   checkFileExists: (filePath) => ipcRenderer.invoke('check-file-exists', filePath),
   // Audio conversion handlers
   convertAudioFile: (inputPath, outputPath, format) => ipcRenderer.invoke('convert-audio-file', inputPath, outputPath, format),
@@ -34,5 +38,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeConversionProgressListener: () => {
     ipcRenderer.removeAllListeners('conversion-progress');
   },
+  locateMissingFile: (trackName) => ipcRenderer.invoke('locate-missing-file', trackName),
 });
 

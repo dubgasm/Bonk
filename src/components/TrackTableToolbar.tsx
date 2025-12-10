@@ -1,4 +1,4 @@
-import { Music, Search, FileEdit, RotateCcw, CheckSquare, XSquare, AlertTriangle, Copy, FileText, FileAudio, MapPin } from 'lucide-react';
+import { Music, Search, FileEdit, RotateCcw, CheckSquare, XSquare, AlertTriangle, Copy, FileText, FileAudio, MapPin, Zap } from 'lucide-react';
 
 interface TrackTableToolbarProps {
   selectedCount: number;
@@ -16,6 +16,7 @@ interface TrackTableToolbarProps {
   onBatchRename: () => void;
   onConvertFormat: () => void;
   onFindLostTracks: () => void;
+  onSmartFixes: () => void;
 }
 
 export default function TrackTableToolbar({
@@ -34,6 +35,7 @@ export default function TrackTableToolbar({
   onBatchRename,
   onConvertFormat,
   onFindLostTracks,
+  onSmartFixes,
 }: TrackTableToolbarProps) {
   const hasSelection = selectedCount > 0;
 
@@ -137,6 +139,15 @@ export default function TrackTableToolbar({
         >
           <MapPin size={16} />
           <span>Find Lost Tracks</span>
+        </button>
+
+        <button
+          className="btn btn-sm"
+          onClick={onSmartFixes}
+          title="Apply Smart Fixes to track metadata"
+        >
+          <Zap size={16} />
+          <span>Smart Fixes</span>
         </button>
 
         <div className="toolbar-separator" />

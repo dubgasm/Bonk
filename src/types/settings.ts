@@ -28,7 +28,6 @@ export interface TagWriteSettings {
 export interface ApiCredentials {
   spotifyClientId: string;
   spotifyClientSecret: string;
-  discogsToken?: string;
 }
 
 export interface AppSettings {
@@ -37,6 +36,7 @@ export interface AppSettings {
   tagWriteSettings: TagWriteSettings;
   apiCredentials: ApiCredentials;
   lastSyncDate: string | null;
+  skipPlaylistRemovalConfirm: boolean;
 }
 
 export const defaultSettings: AppSettings = {
@@ -65,8 +65,8 @@ export const defaultSettings: AppSettings = {
   apiCredentials: {
     spotifyClientId: '',
     spotifyClientSecret: '',
-    discogsToken: '',
   },
   lastSyncDate: null,
+  skipPlaylistRemovalConfirm: false,
 };
 

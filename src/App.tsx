@@ -52,6 +52,7 @@ function App() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showRekordboxDBModal, setShowRekordboxDBModal] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const { 
     library, 
     setLibrary, 
@@ -64,6 +65,7 @@ function App() {
     renamePlaylist,
     deletePlaylist,
     duplicatePlaylist,
+    createSmartPlaylist,
     showMissingOnly,
     setShowMissingOnly,
     deleteTracks
@@ -256,8 +258,170 @@ function App() {
     setShowExportModal(true);
   };
 
+  // Drag and Drop handlers for files/folders
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragOver) {
+      setIsDragOver(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only set drag over to false if we're actually leaving the app container
+    if (e.currentTarget === e.target) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    if (!window.electronAPI) {
+      setError('Electron API not available. Please run the app with: npm run dev');
+      return;
+    }
+
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+
+    // Check if any files are directories or audio files
+    const audioExtensions = ['.mp3', '.flac', '.m4a', '.aac', '.wav', '.aiff', '.ogg', '.wma'];
+    const hasAudioFiles = files.some(file => audioExtensions.some(ext => file.name.toLowerCase().endsWith(ext)));
+    const hasDirectories = files.some(file => file.type === '' || file.type === 'inode/directory');
+
+    if (!hasAudioFiles && !hasDirectories) {
+      setError('No audio files or folders found. Supported formats: MP3, FLAC, M4A, WAV, AIFF, OGG, WMA');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      if (hasDirectories) {
+        // Handle directory drops - scan all directories
+        for (const file of files) {
+          if (file.type === '' || file.type === 'inode/directory') {
+            // This is likely a directory in Electron
+            // Use webkitRelativePath or construct path from file
+            let folderPath = '';
+            if ('path' in file && typeof (file as any).path === 'string') {
+              // Electron provides the path property
+              folderPath = (file as any).path;
+            } else if (file.webkitRelativePath) {
+              // Web fallback (though we shouldn't reach here in Electron)
+              folderPath = file.webkitRelativePath.split('/')[0];
+            }
+
+            if (folderPath) {
+              const result = await window.electronAPI.scanFolder(folderPath);
+              if (result.success && result.library) {
+                handleImportResult(result.library);
+              }
+            }
+          }
+        }
+      } else {
+        // Handle individual audio file drops
+        const audioFiles = files.filter(file =>
+          audioExtensions.some(ext => file.name.toLowerCase().endsWith(ext))
+        );
+
+        if (audioFiles.length > 0) {
+          // Get the parent directory of the first file
+          let tempFolderPath = '';
+          const firstFile = audioFiles[0];
+
+          if ('path' in firstFile && typeof (firstFile as any).path === 'string') {
+            // Electron provides the path property
+            const filePath = (firstFile as any).path;
+            tempFolderPath = filePath.substring(0, filePath.lastIndexOf('/'));
+          }
+
+          if (tempFolderPath) {
+            const result = await window.electronAPI.scanFolder(tempFolderPath);
+            if (result.success && result.library) {
+              // Filter to only include the dropped files
+              const droppedFileNames = audioFiles.map(f => f.name);
+              const filteredTracks = result.library.tracks.filter((track: Track) =>
+                droppedFileNames.includes(track.Name + getFileExtension(track.Location || ''))
+              );
+
+              const filteredLibrary = {
+                tracks: filteredTracks,
+                playlists: result.library.playlists
+              };
+
+              handleImportResult(filteredLibrary);
+            }
+          }
+        }
+      }
+
+      setLoading(false);
+    } catch (err: any) {
+      setError(err.message);
+      setLoading(false);
+    }
+  };
+
+  const getFileExtension = (location: string): string => {
+    const parts = location.split('.');
+    return parts.length > 1 ? '.' + parts[parts.length - 1].toLowerCase() : '';
+  };
+
+  const handleImportResult = (importedLibrary: any) => {
+    // Merge with existing library if any, or set new library
+    if (library) {
+      // Normalize location for comparison
+      const normalizeLocation = (loc: string | undefined): string => {
+        if (!loc) return '';
+        return loc
+          .replace(/^file:\/\/localhost/i, '')
+          .replace(/^file:\/\//i, '')
+          .replace(/\\/g, '/')
+          .toLowerCase()
+          .trim();
+      };
+
+      // Create maps for efficient lookup
+      const existingLocations = new Set(
+        library.tracks.map((t: Track) => normalizeLocation(t.Location))
+      );
+      const existingTrackIDs = new Set(
+        library.tracks.map((t: Track) => t.TrackID)
+      );
+
+      // Filter out duplicates by both Location and TrackID
+      const newTracks = importedLibrary.tracks.filter((t: Track) => {
+        const normalizedLoc = normalizeLocation(t.Location);
+        return !existingLocations.has(normalizedLoc) && !existingTrackIDs.has(t.TrackID);
+      });
+
+      console.log(`Drag & drop: ${importedLibrary.tracks.length} tracks found, ${newTracks.length} new, ${importedLibrary.tracks.length - newTracks.length} duplicates skipped`);
+
+      const mergedLibrary = {
+        tracks: [...library.tracks, ...newTracks],
+        playlists: [...library.playlists, ...importedLibrary.playlists],
+      };
+      setLibrary(mergedLibrary);
+    } else {
+      setLibrary(importedLibrary);
+    }
+  };
+
   return (
-    <div className="app">
+    <div
+      className={`app ${isDragOver ? 'drag-over' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <Header
         onImport={handleImport}
         onImportFolder={handleImportFolder}
@@ -317,6 +481,7 @@ function App() {
             onRenamePlaylist={renamePlaylist}
             onDeletePlaylist={deletePlaylist}
             onDuplicatePlaylist={duplicatePlaylist}
+            onCreateSmartPlaylist={createSmartPlaylist}
             isCollapsed={sidebarCollapsed}
             onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
             showMissingOnly={showMissingOnly}

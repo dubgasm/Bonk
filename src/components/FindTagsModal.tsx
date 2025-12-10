@@ -78,27 +78,15 @@ export default function FindTagsModal({ onClose, onStart, trackCount }: FindTags
               <div className="info-box">
                 <AlertCircle size={18} />
                 <span>
-                  Searching {trackCount} track{trackCount !== 1 ? 's' : ''} for missing tags and album art
+                  Searching {trackCount} track{trackCount !== 1 ? 's' : ''} for missing tags
                 </span>
               </div>
 
               <div className="form-section">
                 <h3>Data Sources</h3>
                 <p className="section-description">
-                  Sources are checked in priority order. Beatport is best for EDM genres.
+                  Sources are checked in priority order. Spotify provides audio features, MusicBrainz provides comprehensive metadata.
                 </p>
-
-                <label className="checkbox-option">
-                  <input
-                    type="checkbox"
-                    checked={options.enableBeatport}
-                    onChange={() => toggleOption('enableBeatport')}
-                  />
-                  <div className="checkbox-label">
-                    <strong>Beatport</strong>
-                    <span>Best for EDM - detailed genre information</span>
-                  </div>
-                </label>
 
                 <label className="checkbox-option">
                   <input
@@ -121,18 +109,6 @@ export default function FindTagsModal({ onClose, onStart, trackCount }: FindTags
                   <div className="checkbox-label">
                     <strong>MusicBrainz</strong>
                     <span>Free database with broad coverage</span>
-                  </div>
-                </label>
-
-                <label className="checkbox-option">
-                  <input
-                    type="checkbox"
-                    checked={options.enableDiscogs}
-                    onChange={() => toggleOption('enableDiscogs')}
-                  />
-                  <div className="checkbox-label">
-                    <strong>Discogs</strong>
-                    <span>Extensive vinyl and release database</span>
                   </div>
                 </label>
               </div>
@@ -176,14 +152,6 @@ export default function FindTagsModal({ onClose, onStart, trackCount }: FindTags
                     <span>Album</span>
                   </label>
 
-                  <label className="checkbox-option">
-                    <input
-                      type="checkbox"
-                      checked={options.updateAlbumArt}
-                      onChange={() => toggleOption('updateAlbumArt')}
-                    />
-                    <span>Album Art</span>
-                  </label>
 
                   <label className="checkbox-option">
                     <input

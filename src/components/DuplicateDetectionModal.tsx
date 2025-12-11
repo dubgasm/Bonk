@@ -36,33 +36,39 @@ export default function DuplicateDetectionModal({
     return match ? match[1].toLowerCase() : '';
   };
 
+  const hasText = (val: any): boolean => {
+    if (val === null || val === undefined) return false;
+    const str = typeof val === 'string' ? val : String(val);
+    return str.trim().length > 0;
+  };
+
   const countMetadataFields = (track: Track): number => {
     let count = 0;
-    if (track.Name && track.Name.trim()) count++;
-    if (track.Artist && track.Artist.trim()) count++;
-    if (track.Album && track.Album.trim()) count++;
-    if (track.Genre && track.Genre.trim()) count++;
-    if (track.Year && track.Year.trim()) count++;
-    if (track.AverageBpm && track.AverageBpm.trim()) count++;
-    if (track.Key && track.Key.trim()) count++;
-    if (track.Comments && track.Comments.trim()) count++;
-    if (track.Rating && track.Rating.trim()) count++;
-    if (track.Label && track.Label.trim()) count++;
-    if (track.Remixer && track.Remixer.trim()) count++;
-    if (track.Mix && track.Mix.trim()) count++;
-    if (track.Grouping && track.Grouping.trim()) count++;
-    if (track.Tonality && track.Tonality.trim()) count++;
-    if (track.BitRate && track.BitRate.trim()) count++;
-    if (track.SampleRate && track.SampleRate.trim()) count++;
-    if (track.TotalTime && track.TotalTime.trim()) count++;
-    if (track.CatalogNumber && track.CatalogNumber.trim()) count++;
-    if (track.Publisher && track.Publisher.trim()) count++;
-    if (track.Writers && track.Writers.trim()) count++;
-    if (track.Producers && track.Producers.trim()) count++;
-    if (track.FeaturedArtists && track.FeaturedArtists.trim()) count++;
-    if (track.ISRC && track.ISRC.trim()) count++;
-    if (track.ReleaseDate && track.ReleaseDate.trim()) count++;
-    if (track.MixName && track.MixName.trim()) count++;
+    if (hasText(track.Name)) count++;
+    if (hasText(track.Artist)) count++;
+    if (hasText(track.Album)) count++;
+    if (hasText(track.Genre)) count++;
+    if (hasText(track.Year)) count++;
+    if (hasText(track.AverageBpm)) count++;
+    if (hasText(track.Key)) count++;
+    if (hasText(track.Comments)) count++;
+    if (hasText(track.Rating)) count++;
+    if (hasText(track.Label)) count++;
+    if (hasText(track.Remixer)) count++;
+    if (hasText(track.Mix)) count++;
+    if (hasText(track.Grouping)) count++;
+    if (hasText(track.Tonality)) count++;
+    if (hasText(track.BitRate)) count++;
+    if (hasText(track.SampleRate)) count++;
+    if (hasText(track.TotalTime)) count++;
+    if (hasText(track.CatalogNumber)) count++;
+    if (hasText(track.Publisher)) count++;
+    if (hasText(track.Writers)) count++;
+    if (hasText(track.Producers)) count++;
+    if (hasText(track.FeaturedArtists)) count++;
+    if (hasText(track.ISRC)) count++;
+    if (hasText(track.ReleaseDate)) count++;
+    if (hasText(track.MixName)) count++;
     // Skip album art entirely to avoid loading it
     return count;
   };

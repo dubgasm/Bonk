@@ -27,6 +27,73 @@ require('dotenv').config();
 const execAsync = promisify(exec);
 const FFMPEG_PATH = '/opt/homebrew/bin/ffmpeg';
 
+// Helper function to parse custom tags from metadata (TXXX frames)
+function parseCustomTagsFromMetadata(metadata) {
+  const tags = [];
+  
+  // Check for TXXX frames in ID3v2 tags
+  if (metadata.native && metadata.native.id3v2) {
+    for (const frame of metadata.native.id3v2) {
+      if (frame.id === 'TXXX' && frame.value) {
+        // TXXX frames have description and text
+        const description = frame.description || '';
+        const text = Array.isArray(frame.value.text) ? frame.value.text.join('') : frame.value.text || '';
+        
+        // Look for MYTAG description
+        if (description.toUpperCase() === 'MYTAG' && text) {
+          // Parse semicolon-separated tags: "Category: Name;Category2: Name2"
+          const tagEntries = text.split(';');
+          for (const entry of tagEntries) {
+            const trimmedEntry = entry.trim();
+            if (!trimmedEntry) continue;
+            
+            // Parse format "Category: Name" or just "Name"
+            const colonIndex = trimmedEntry.indexOf(':');
+            if (colonIndex > 0) {
+              const category = trimmedEntry.substring(0, colonIndex).trim();
+              const name = trimmedEntry.substring(colonIndex + 1).trim();
+              if (category && name) {
+                tags.push({ category, name, source: 'id3' });
+              }
+            } else {
+              // No category, use "Custom" as default
+              tags.push({ category: 'Custom', name: trimmedEntry, source: 'id3' });
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // Also check for TXXX in ffprobe tags format (from FFprobe fallback)
+  if (metadata.format && metadata.format.tags) {
+    for (const [key, value] of Object.entries(metadata.format.tags)) {
+      if (key.startsWith('TXXX:MYTAG') || key === 'TXXX:MYTAG') {
+        const tagValue = String(value);
+        // Parse semicolon-separated tags: "Category: Name;Category2: Name2"
+        const tagEntries = tagValue.split(';');
+        for (const entry of tagEntries) {
+          const trimmedEntry = entry.trim();
+          if (!trimmedEntry) continue;
+          
+          const colonIndex = trimmedEntry.indexOf(':');
+          if (colonIndex > 0) {
+            const category = trimmedEntry.substring(0, colonIndex).trim();
+            const name = trimmedEntry.substring(colonIndex + 1).trim();
+            if (category && name) {
+              tags.push({ category, name, source: 'id3' });
+            }
+          } else {
+            tags.push({ category: 'Custom', name: trimmedEntry, source: 'id3' });
+          }
+        }
+      }
+    }
+  }
+  
+  return tags.length > 0 ? tags : undefined;
+}
+
 // Helper function to get the path to rekordbox_bridge.py
 // When packaged, it's in app.asar.unpacked, otherwise it's in __dirname
 function getRekordboxBridgePath() {
@@ -156,6 +223,33 @@ let mm;
 
 let mainWindow = null;
 
+// Try multiple renderer locations so packaged app can find index.html
+function resolveRendererPath() {
+  const candidates = [
+    // Standard electron-builder unpacked location
+    path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'renderer', 'index.html'),
+    // Inside the asar (works when dist is packed)
+    path.join(app.getAppPath(), 'dist', 'renderer', 'index.html'),
+    // Relative to this file when running locally
+    path.join(__dirname, 'dist', 'renderer', 'index.html'),
+    // Fallback to resources root (covers mispacked builds)
+    path.join(process.resourcesPath, 'renderer', 'index.html'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (require('fs').existsSync(candidate)) {
+        return candidate;
+      }
+    } catch {
+      // ignore and keep trying
+    }
+  }
+
+  console.error('Renderer index.html not found. Checked:', candidates);
+  return null;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -171,20 +265,25 @@ function createWindow() {
 
   // Determine if we should use dev server or production build
   // Dev if not packaged and NODE_ENV !== production (even if dist exists)
-  const distPath = path.join(__dirname, 'dist/renderer/index.html');
   const isDev = process.env.NODE_ENV !== 'production' && !app.isPackaged;
-  
+
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
-    // Production mode: load from dist folder
-    if (require('fs').existsSync(distPath)) {
-      mainWindow.loadFile(distPath);
+    // Production mode: locate renderer in any known packaging location
+    const rendererPath = resolveRendererPath();
+
+    console.log('process.resourcesPath:', process.resourcesPath);
+    console.log('app.getAppPath():', app.getAppPath());
+    console.log('__dirname:', __dirname);
+    console.log('Resolved renderer path:', rendererPath);
+
+    if (rendererPath) {
+      mainWindow.loadFile(rendererPath);
+      console.log('✓ Successfully loaded renderer');
     } else {
-      console.error('Production build not found at:', distPath);
-      console.error('Please run: npm run build');
-      mainWindow.loadURL('data:text/html,<h1>Production build not found</h1><p>Please run: npm run build</p>');
+      mainWindow.loadURL('data:text/html,<h1>Renderer not found</h1><p>Please reinstall or run: npm run build</p>');
     }
   }
 
@@ -345,6 +444,8 @@ ipcMain.handle('scan-folder', async (_, folderPath) => {
             Comments: metadata.common.comment?.[0] || '',
             Tonality: metadata.common.key || '',
             AlbumArt: albumArt,
+            // Parse custom tags from TXXX frames (ID3)
+            tags: parseCustomTagsFromMetadata(metadata),
           };
           
           result.tracks.push(track);
@@ -499,6 +600,24 @@ ipcMain.handle('scan-folder', async (_, folderPath) => {
           const bitRate = ffprobeOutput.format?.bit_rate || '';
           const duration = ffprobeOutput.format?.duration ? (ffprobeOutput.format.duration * 1000).toString() : '';
             
+            // Parse custom tags from TXXX frames in ffprobe tags
+            const customTags = [];
+            for (const [key, value] of Object.entries(tags)) {
+              if (key.startsWith('TXXX:MYTAG') || key === 'TXXX:MYTAG' || key.includes('MYTAG')) {
+                const tagValue = String(value);
+                const colonIndex = tagValue.indexOf(':');
+                if (colonIndex > 0) {
+                  const category = tagValue.substring(0, colonIndex).trim();
+                  const name = tagValue.substring(colonIndex + 1).trim();
+                  if (category && name) {
+                    customTags.push({ category, name });
+                  }
+                } else {
+                  customTags.push({ category: 'Custom', name: tagValue.trim() });
+                }
+              }
+            }
+            
             result.tracks.push({
               TrackID: trackId,
               Name: tags.title || tags.TITLE || path.basename(trackPath, ext),
@@ -517,6 +636,7 @@ ipcMain.handle('scan-folder', async (_, folderPath) => {
               Location: 'file://localhost' + trackPath,
               DateAdded: new Date().toISOString(),
               AlbumArt: albumArt,
+              tags: customTags.length > 0 ? customTags : undefined,
             });
             
           if (process.env.NODE_ENV === 'development') {
@@ -641,6 +761,8 @@ ipcMain.handle('reload-track', async (_, trackPath) => {
         Tonality: metadata.common.key || '',
         Key: metadata.common.key || '',
         AlbumArt: albumArt,
+        // Parse custom tags from TXXX frames (ID3)
+        tags: parseCustomTagsFromMetadata(metadata),
       };
       
       console.log('✓ Track reloaded from file');
@@ -978,7 +1100,7 @@ ipcMain.handle('find-tags', async (event, tracks, options) => {
           
           const response = await axios.get(url, {
             headers: {
-              'User-Agent': 'Bonk/1.0.0 ( bonk@example.com )'
+              'User-Agent': 'Bonk!/1.0.0 ( bonk@example.com )'
             },
             timeout: 5000
           });
@@ -1221,6 +1343,76 @@ ipcMain.handle('rekordbox-backup-database', async (_, dbPath) => {
     return {
       success: false,
       error: `Failed to backup Rekordbox database: ${error.message}`
+    };
+  }
+});
+
+ipcMain.handle('rekordbox-check-integrity', async (_, dbPath) => {
+  try {
+    console.log('🔍 Checking Rekordbox database integrity...');
+    const pythonPath = 'python3';
+    const bridgePath = getRekordboxBridgePath();
+
+    const command = dbPath
+      ? `${pythonPath} "${bridgePath}" check-integrity "${dbPath}"`
+      : `${pythonPath} "${bridgePath}" check-integrity`;
+
+    console.log('Running command:', command);
+    const { stdout, stderr } = await execAsync(command);
+
+    if (stderr) {
+      console.warn('Python stderr:', stderr);
+    }
+
+    const result = JSON.parse(stdout);
+    if (result.success && result.integrity_ok) {
+      console.log('✓ Database integrity check passed');
+    } else if (result.success && !result.integrity_ok) {
+      console.warn('⚠ Database integrity check failed:', result.message);
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Rekordbox integrity check error:', error);
+    return {
+      success: false,
+      error: `Failed to check database integrity: ${error.message}`
+    };
+  }
+});
+
+ipcMain.handle('rekordbox-repair-database', async (_, dbPath) => {
+  try {
+    console.log('🔧 Repairing Rekordbox database...');
+    const pythonPath = 'python3';
+    const bridgePath = getRekordboxBridgePath();
+
+    const command = dbPath
+      ? `${pythonPath} "${bridgePath}" repair-database "${dbPath}"`
+      : `${pythonPath} "${bridgePath}" repair-database`;
+
+    console.log('Running command:', command);
+    const { stdout, stderr } = await execAsync(command, {
+      maxBuffer: 50 * 1024 * 1024 // 50MB buffer for large databases
+    });
+
+    if (stderr) {
+      console.warn('Python stderr:', stderr);
+    }
+
+    const result = JSON.parse(stdout);
+    if (result.success) {
+      console.log('✓ Database repair completed successfully');
+    } else {
+      console.error('✗ Database repair failed:', result.error);
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Rekordbox repair error:', error);
+    return {
+      success: false,
+      error: `Failed to repair Rekordbox database: ${error.message}`
     };
   }
 });
@@ -1694,6 +1886,33 @@ ipcMain.handle('write-tags', async (_, tracks, settings) => {
           // Add metadata arguments
           for (const [key, value] of Object.entries(metadata)) {
             ffmpegArgs.push('-metadata', `${key}=${value}`);
+          }
+
+          // Add custom tags (MyTags) as TXXX frames for ID3 embedding
+          // Combine all tags into a single TXXX frame (semicolon-separated)
+          if (track.tags && Array.isArray(track.tags) && track.tags.length > 0) {
+            console.log(`📌 Writing ${track.tags.length} custom tag(s) to file...`);
+            const tagValues = [];
+            for (const tag of track.tags) {
+              if (tag && tag.name) {
+                // Format: Category: Name (e.g., "Genre: Afro House")
+                const tagValue = tag.category ? `${tag.category}: ${tag.name}` : tag.name;
+                tagValues.push(tagValue);
+                console.log(`  ✓ Tag: ${tagValue}`);
+              }
+            }
+            if (tagValues.length > 0) {
+              // Combine all tags into a single TXXX frame with semicolon separation
+              const combinedTags = tagValues.join(';');
+              // FFmpeg format: TXXX:description=value
+              ffmpegArgs.push('-metadata', `TXXX:MYTAG=${combinedTags}`);
+              console.log(`  📝 Combined tags: ${combinedTags}`);
+            }
+          } else {
+            // Debug: log if tags are missing (this is normal - not all tracks have custom tags)
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`  ℹ️ No custom tags to write for: ${track.Name}`);
+            }
           }
 
           // Get file format for format-specific handling

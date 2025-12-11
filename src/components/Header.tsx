@@ -15,7 +15,7 @@ export default function Header({ onImport, onImportFolder, onExport, onSettings,
     <header className="header">
       <div className="header-content">
         <div className="logo">
-          <h1>Bonk</h1>
+          <h1>Bonk!</h1>
           <span className="subtitle">Metadata Editor</span>
         </div>
         

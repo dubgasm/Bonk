@@ -4,6 +4,10 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import TrackContextMenu from './TrackContextMenu';
 import FindTagsModal from './FindTagsModal';
 import TrackTableToolbar from './TrackTableToolbar';
+import TagsModal from './TagsModal';
+import TagSelectorModal from './TagSelectorModal';
+import BatchTagUpdateModal from './BatchTagUpdateModal';
+import BatchGenreUpdateModal from './BatchGenreUpdateModal';
 import DuplicateDetectionModal from './DuplicateDetectionModal';
 import BatchRenameModal from './BatchRenameModal';
 import FormatConversionModal, { FormatConversion } from './FormatConversionModal';
@@ -12,7 +16,7 @@ import RemoveFromPlaylistModal from './RemoveFromPlaylistModal';
 import SmartFixesModal, { SmartFixConfig } from './SmartFixesModal';
 import { TagFinderOptions } from '../types/musicDatabase';
 import { Track } from '../types/track';
-const columnTemplate = '40px 60px 1.5fr 1.2fr 1.2fr 1fr 0.8fr 0.7fr 0.6fr';
+const columnTemplate = '40px 60px 1.5fr 1.2fr 1.2fr 1fr 0.8fr 1fr 0.7fr 0.6fr';
 
 export default function TrackTable() {
   const {
@@ -43,6 +47,10 @@ export default function TrackTable() {
   const [showFindLostTracksModal, setShowFindLostTracksModal] = useState(false);
   const [showRemoveFromPlaylistModal, setShowRemoveFromPlaylistModal] = useState(false);
   const [showSmartFixesModal, setShowSmartFixesModal] = useState(false);
+  const [showTagsModal, setShowTagsModal] = useState(false);
+  const [showBatchTagUpdateModal, setShowBatchTagUpdateModal] = useState(false);
+  const [showBatchGenreUpdateModal, setShowBatchGenreUpdateModal] = useState(false);
+  const [tagSelectorTrack, setTagSelectorTrack] = useState<Track | null>(null);
   const [modalTrack, setModalTrack] = useState<typeof filteredTracks[0] | null>(null);
   const [editingCell, setEditingCell] = useState<{ trackId: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -505,6 +513,9 @@ export default function TrackTable() {
         onConvertFormat={() => setShowFormatConversionModal(true)}
         onFindLostTracks={() => setShowFindLostTracksModal(true)}
         onSmartFixes={() => setShowSmartFixesModal(true)}
+        onManageTags={() => setShowTagsModal(true)}
+        onBatchUpdateTags={() => setShowBatchTagUpdateModal(true)}
+        onBatchUpdateGenres={() => setShowBatchGenreUpdateModal(true)}
       />
       
       <div className="track-table-container">
@@ -543,6 +554,7 @@ export default function TrackTable() {
               <div>BPM</div>
               <div>Key</div>
               <div>Time</div>
+              <div>Tags</div>
               <div>Year</div>
             </div>
 
@@ -587,6 +599,18 @@ export default function TrackTable() {
                     {renderEditableCell(track, 'AverageBpm', bpmValue)}
                     {renderEditableCell(track, 'Key', track.Key || '')}
                     <div>{formatTime(track.TotalTime)}</div>
+                    <div
+                      className="tags-cell"
+                      title="Click to edit tags"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setTagSelectorTrack(track);
+                      }}
+                    >
+                      {(track.tags || []).length
+                        ? track.tags!.map((t) => t.name).join(', ')
+                        : 'Add tags'}
+                    </div>
                     {renderEditableCell(track, 'Year', track.Year || '')}
                   </div>
                 );
@@ -697,6 +721,47 @@ export default function TrackTable() {
           selectedTracks={Array.from(selectedTracks)}
           totalTracks={filteredTracks.length}
           onApplyFixes={handleSmartFixes}
+        />
+      )}
+
+      {showTagsModal && (
+        <TagsModal
+          isOpen={showTagsModal}
+          onClose={() => setShowTagsModal(false)}
+        />
+      )}
+
+      {tagSelectorTrack && (
+        <TagSelectorModal
+          isOpen={!!tagSelectorTrack}
+          track={tagSelectorTrack}
+          onClose={() => setTagSelectorTrack(null)}
+        />
+      )}
+
+      {showBatchTagUpdateModal && (
+        <BatchTagUpdateModal
+          isOpen={showBatchTagUpdateModal}
+          onClose={() => setShowBatchTagUpdateModal(false)}
+          trackIds={
+            selectedTracks.size > 0
+              ? Array.from(selectedTracks)
+              : filteredTracks.map((t) => t.TrackID)
+          }
+          trackCount={selectedTracks.size > 0 ? selectedTracks.size : filteredTracks.length}
+        />
+      )}
+
+      {showBatchGenreUpdateModal && (
+        <BatchGenreUpdateModal
+          isOpen={showBatchGenreUpdateModal}
+          onClose={() => setShowBatchGenreUpdateModal(false)}
+          trackIds={
+            selectedTracks.size > 0
+              ? Array.from(selectedTracks)
+              : filteredTracks.map((t) => t.TrackID)
+          }
+          trackCount={selectedTracks.size > 0 ? selectedTracks.size : filteredTracks.length}
         />
       )}
     </div>

@@ -1,0 +1,126 @@
+*** Begin Patch
+*** Update File: rekordbox_bridge.py
+@@
+     def import_database(self, db_path: Optional[str] = None) -> Dict[str, Any]:
+         """Import tracks and playlists from Rekordbox database"""
+         try:
+             # Open database
+             result = self.open_database(db_path)
+             if not result["success"]:
+                 return result
+@@
+             tracks = []
+             for content in self.db.get_content():
+                 # Safely get key name
+                 try:
+                     key_name = content.KeyName if content.Key else ""
+                 except:
+                     key_name = ""
+@@
+                 # Safely get remixer name
+                 try:
+                     remixer_name = content.RemixerName if content.Remixer else ""
+                 except:
+                     remixer_name = ""
+@@
+                 # Fetch MyTag (custom tags)
+                 tags = []
+                 try:
+                   if hasattr(content, "MyTag") and content.MyTag:
+                       # pyrekordbox returns a list of strings
+                       for t in content.MyTag:
+                           tags.append({"category": "MyTag", "name": t, "source": "rekordbox"})
+                 except Exception as e:
+                   # ignore tag parsing errors to keep import resilient
+                   pass
+@@
+                 track = {
+                     "TrackID": str(content.ID),
+                     "Name": content.Title or "",
+                     "Artist": content.ArtistName or "",
+                     "Album": content.AlbumName or "",
+@@
+                     "Tonality": key_name,
+                     "Label": content.LabelName or "",
+                     "Mix": content.MixName or "",
+                     "Grouping": content.Grouping or "",
+                     "Key": content.KeyID,
++                    "tags": tags,
+                 }
+@@
+             return {
+                 "success": True,
+                 "library": {
+                     "tracks": tracks,
+                     "playlists": playlists
+                 },
+                 "trackCount": len(tracks),
+                 "playlistCount": len(playlists)
+             }
+         except Exception as e:
+             import traceback
+             traceback.print_exc(file=sys.stderr)
+             return {
+                 "success": False,
+                 "error": f"Failed to import database: {str(e)}"
+             }
+@@
+     def export_to_database(self, tracks: List[Dict], playlists: List[Dict], 
+                           db_path: Optional[str] = None, sync_mode: str = "overwrite") -> Dict[str, Any]:
+         """Export tracks and playlists to Rekordbox database"""
+         try:
+             # Open database
+@@
+             # Process each track
+             for track_data in tracks:
+                 track_id = track_data.get("TrackID")
+                 # Find existing track by file path
+                 content = self.db.get_content_by_path(track_data.get("Location"))
+@@
+                 # Update existing track
+                 if content:
+                     # Update tags (MyTag)
+                     try:
+                         tags = track_data.get("tags") or []
+                         names = [t.get("name") for t in tags if t.get("name")]
+                         content.MyTag = names
+                     except Exception:
+                         pass
+                     content.save(commit=True)
+                     updated += 1
+                 else:
+                     # Create new content
+                     try:
+                         content = self.db.add_content(
+                             title=track_data.get("Name", ""),
+                             artist=track_data.get("Artist", ""),
+                             album=track_data.get("Album", ""),
+                             key=track_data.get("Key"),
+                             path=track_data.get("Location")
+                         )
+@@
+                         try:
+                             tags = track_data.get("tags") or []
+                             names = [t.get("name") for t in tags if t.get("name")]
+                             content.MyTag = names
+                         except Exception:
+                             pass
+                         content.save(commit=True)
+                         added += 1
+                     except Exception as e:
+                         errors.append(f"Failed to add track {track_id}: {str(e)}")
+@@
+             return {
+                 "success": True,
+                 "added": added,
+                 "updated": updated,
+                 "skipped": skipped,
+                 "errors": errors
+             }
+         except Exception as e:
+             return {
+                 "success": False,
+                 "error": f"Failed to export to database: {str(e)}"
+             }
+*** End Patch
+

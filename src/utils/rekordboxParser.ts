@@ -76,8 +76,36 @@ export class RekordboxParser {
         Grouping: track.Grouping,
         Key: track.Tonality,
         CuePoints: cuePoints,
+        // Parse MyTags from XML (format: "Category: Name, Category: Name")
+        tags: this.parseMyTags(track.MyTag),
       };
     });
+  }
+
+  private parseMyTags(myTagString: string | undefined): Array<{ category: string; name: string }> | undefined {
+    if (!myTagString || typeof myTagString !== 'string') {
+      return undefined;
+    }
+
+    // Parse comma-separated tags in format "Category: Name"
+    const tags: Array<{ category: string; name: string }> = [];
+    const tagStrings = myTagString.split(',').map(s => s.trim()).filter(s => s.length > 0);
+
+    for (const tagStr of tagStrings) {
+      const colonIndex = tagStr.indexOf(':');
+      if (colonIndex > 0) {
+        const category = tagStr.substring(0, colonIndex).trim();
+        const name = tagStr.substring(colonIndex + 1).trim();
+        if (category && name) {
+          tags.push({ category, name });
+        }
+      } else {
+        // No category, use "Custom" as default
+        tags.push({ category: 'Custom', name: tagStr });
+      }
+    }
+
+    return tags.length > 0 ? tags : undefined;
   }
 
   private parseCuePoints(positionMarks: any): CuePoint[] {
@@ -152,9 +180,9 @@ export class RekordboxParser {
       DJ_PLAYLISTS: {
         Version: '1.0.0',
         PRODUCT: {
-          Name: 'Bonk',
+          Name: 'Bonk!',
           Version: '1.0.0',
-          Company: 'Bonk',
+          Company: 'Bonk!',
         },
         COLLECTION: {
           Entries: library.tracks.length.toString(),
@@ -185,6 +213,20 @@ export class RekordboxParser {
             if (track.Label) trackObj.Label = track.Label;
             if (track.Mix) trackObj.Mix = track.Mix;
             if (track.Grouping) trackObj.Grouping = track.Grouping;
+
+            // Add MyTags (custom tags) for Rekordbox USB/CDJ compatibility
+            // Format: Category: Name (e.g., "Genre: Afro House")
+            if ((track as any).tags && Array.isArray((track as any).tags) && (track as any).tags.length > 0) {
+              const myTags = (track as any).tags
+                .filter((tag: any) => tag && tag.name)
+                .map((tag: any) => tag.category ? `${tag.category}: ${tag.name}` : tag.name);
+              
+              if (myTags.length > 0) {
+                // Rekordbox XML uses a custom field for MyTags
+                // Store as comma-separated list in a custom field
+                trackObj.MyTag = myTags.join(', ');
+              }
+            }
 
             // Add cue points if they exist
             if (track.CuePoints && track.CuePoints.length > 0) {

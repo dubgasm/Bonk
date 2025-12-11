@@ -1,4 +1,4 @@
-# Bonk - Music Metadata Editor
+# Bonk! - Music Metadata Editor
 
 A modern desktop application for viewing and editing music metadata with Rekordbox 7 import/export support.
 
@@ -63,7 +63,7 @@ pip3 install -r requirements.txt
 python3 rekordbox_bridge.py get-config
 ```
 
-For detailed setup instructions, see **[REKORDBOX_DB_SETUP.md](./REKORDBOX_DB_SETUP.md)**.
+For detailed setup instructions, see **[REKORDBOX_DB_SETUP.md](./docs/REKORDBOX_DB_SETUP.md)**.
 
 ### Usage
 
@@ -128,7 +128,7 @@ The built application will be in the `release` directory.
 
 ### Advanced Operations
 - **Inline Editing**: Double-click any cell (Title, Artist, Album, Genre, BPM, Key, Year) to edit
-- **Keyboard Shortcuts**: See [Key Shortcuts.md](./Key%20Shortcuts.md) for full list
+- **Keyboard Shortcuts**: See [Key Shortcuts.md](./docs/Key%20Shortcuts.md) for full list
 - **Quick Actions**: Use the toolbar for one-click access to Detect Keys, Find Tags, Write Tags
 - **Batch Operations**: Select multiple tracks and apply operations to all
 - **Smart Context Menu**: Right-click for track-specific or batch operations
@@ -171,14 +171,14 @@ To export from Rekordbox:
 
 ```
 Bonk/
-├── electron/          # Electron main process (TypeScript)
-├── src/
-│   ├── components/    # React components
-│   ├── store/         # Zustand state management
-│   ├── types/         # TypeScript type definitions
-│   ├── utils/         # Utilities (XML parser)
-│   └── styles/        # CSS styles
-├── electron.js        # Electron main process (JavaScript)
+├── electron/          # Electron main process (TypeScript sources)
+├── src/               # React renderer (Vite)
+├── bin/               # KeyFinder CLI binary
+├── docs/              # Guides, shortcuts, feature docs
+├── tools/             # Developer scripts (e.g., debug_smartlist.py)
+├── extras/            # Optional external artifacts (e.g., Rekordbox fixer dmg)
+├── pyrekordbox-0.4.4/ # Bundled Python dependency for Rekordbox DB access
+├── electron.js        # Electron main process (built JS)
 ├── preload.js         # Preload script
 └── package.json       # Project configuration
 ```
@@ -194,17 +194,16 @@ MIT License - feel free to use this project for personal or commercial purposes.
 ## Documentation
 
 ### Getting Started
-- **[QUICKSTART.md](./QUICKSTART.md)** - Quick start guide
-- **[Key Shortcuts.md](./Key%20Shortcuts.md)** - Complete keyboard shortcuts reference
+- **[QUICKSTART.md](./docs/QUICKSTART.md)** - Quick start guide
+- **[Key Shortcuts.md](./docs/Key%20Shortcuts.md)** - Complete keyboard shortcuts reference
 
 ### Features
-- **[REKORDBOX_DB_SETUP.md](./REKORDBOX_DB_SETUP.md)** - 🆕 Rekordbox Database import/export/sync
-- **[SYNC_FEATURES.md](./SYNC_FEATURES.md)** - Sync modes and safe tag writing
-- **[FOLDER_IMPORT_KEY_DETECTION.md](./FOLDER_IMPORT_KEY_DETECTION.md)** - Folder import basics
-- **[KEY_DETECTION.md](./KEY_DETECTION.md)** - Professional key detection with KeyFinder
-- **[FIND_TAGS_ALBUM_ART.md](./FIND_TAGS_ALBUM_ART.md)** - Automatic metadata and album art finding
-- **[UX_GUIDE.md](./UX_GUIDE.md)** - Complete UX features guide (inline editing, shortcuts, toolbar)
-- **[FORMAT_CONVERSION_GUIDE.md](./FORMAT_CONVERSION_GUIDE.md)** - 🆕 Convert audio formats (FLAC→AIFF, MP3→FLAC, etc.) with automatic Rekordbox relinking
+- **[REKORDBOX_DB_SETUP.md](./docs/REKORDBOX_DB_SETUP.md)** - 🆕 Rekordbox Database import/export/sync
+- **[FOLDER_IMPORT_KEY_DETECTION.md](./docs/FOLDER_IMPORT_KEY_DETECTION.md)** - Folder import basics
+- **[KEY_DETECTION.md](./docs/KEY_DETECTION.md)** - Professional key detection with KeyFinder
+- **[FIND_TAGS_ALBUM_ART.md](./docs/FIND_TAGS_ALBUM_ART.md)** - Automatic metadata and album art finding
+- **[UX_GUIDE.md](./docs/UX_GUIDE.md)** - Complete UX features guide (inline editing, shortcuts, toolbar)
+- **[FORMAT_CONVERSION_GUIDE.md](./docs/FORMAT_CONVERSION_GUIDE.md)** - 🆕 Convert audio formats (FLAC→AIFF, MP3→FLAC, etc.) with automatic Rekordbox relinking
 
 ## Acknowledgments
 

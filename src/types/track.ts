@@ -36,6 +36,8 @@ export interface Track {
   
   CuePoints?: CuePoint[];
   isMissing?: boolean; // Track if file is missing
+  // Custom tags for smartlists (category + name)
+  tags?: CustomTag[];
 }
 
 export interface CuePoint {
@@ -50,10 +52,13 @@ export interface CuePoint {
 
 export interface Playlist {
   Name: string;
-  Type: string;
+  Type: string; // "0" = folder, "1" = regular playlist, "2" = smart playlist
   KeyType: string;
   Entries: string[];
   Children?: Playlist[];
+  // Smart playlist properties (only present for Type === "2")
+  conditions?: SmartListCondition[];
+  logicalOperator?: number; // 1 = ALL, 2 = ANY
 }
 
 export enum SmartListProperty {
@@ -79,7 +84,8 @@ export enum SmartListProperty {
   REMIXED_BY = 'REMIXED_BY',
   DURATION = 'DURATION',
   NAME = 'NAME',
-  YEAR = 'YEAR'
+  YEAR = 'YEAR',
+  CUSTOM_TAG = 'CUSTOM_TAG'
 }
 
 export enum SmartListOperator {
@@ -111,6 +117,12 @@ export enum SmartListLogicalOperator {
 export interface SmartList {
   logical_operator: SmartListLogicalOperator;
   conditions: SmartListCondition[];
+}
+
+export interface CustomTag {
+  category: string;
+  name: string;
+  source?: string; // optional, e.g., 'rekordbox'
 }
 
 export interface RekordboxLibrary {

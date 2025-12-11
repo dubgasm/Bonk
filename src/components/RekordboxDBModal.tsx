@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Database, Download, Upload, RefreshCw, Settings, X, CheckCircle, AlertCircle, Loader, Archive } from 'lucide-react';
+import { Database, Download, Upload, RefreshCw, X, CheckCircle, AlertCircle, Loader, Archive } from 'lucide-react';
 
 interface RekordboxDBModalProps {
   onClose: () => void;
@@ -24,9 +24,6 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
   const [status, setStatus] = useState<OperationStatus>('idle');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [detailsMessage, setDetailsMessage] = useState<string>('');
-  const [showConfig, setShowConfig] = useState(false);
-  const [customInstallDir, setCustomInstallDir] = useState('');
-  const [customAppDir, setCustomAppDir] = useState('');
 
   useEffect(() => {
     loadConfig();
@@ -45,51 +42,6 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
       }
     } catch (error) {
       console.error('Failed to load config:', error);
-    }
-  };
-
-  const handleUpdateConfig = async () => {
-    try {
-      if (!window.electronAPI || !customInstallDir || !customAppDir) return;
-
-      setStatus('loading');
-      setStatusMessage('Updating configuration...');
-
-      const result = await (window.electronAPI as any).rekordboxSetConfig?.(
-        customInstallDir,
-        customAppDir
-      );
-
-      if (result?.success) {
-        setStatus('success');
-        setStatusMessage('Configuration updated successfully');
-        await loadConfig();
-        setTimeout(() => {
-          setStatus('idle');
-          setShowConfig(false);
-        }, 2000);
-      } else {
-        setStatus('error');
-        setStatusMessage('Failed to update configuration');
-        setDetailsMessage(result?.error || 'Unknown error');
-      }
-    } catch (error: any) {
-      setStatus('error');
-      setStatusMessage('Error updating configuration');
-      setDetailsMessage(error.message);
-    }
-  };
-
-  const handleSelectDatabase = async () => {
-    try {
-      if (!window.electronAPI) return;
-
-      const dbPath = await (window.electronAPI as any).rekordboxSelectDatabase?.();
-      if (dbPath) {
-        setCustomDbPath(dbPath);
-      }
-    } catch (error) {
-      console.error('Failed to select database:', error);
     }
   };
 
@@ -296,94 +248,6 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
         </div>
 
         <div className="modal-body">
-          {/* Configuration Section - Only show if auto-detection failed */}
-          {!config?.db_path && (
-            <div className="db-section">
-              <div className="db-section-header">
-                <Settings size={18} />
-                <h3>Configuration</h3>
-                <button 
-                  className="btn-link"
-                  onClick={() => setShowConfig(!showConfig)}
-                >
-                  {showConfig ? 'Hide' : 'Show'}
-                </button>
-              </div>
-
-              {showConfig && (
-                <div className="config-form">
-                  <div className="form-group">
-                    <label>Pioneer Install Directory</label>
-                    <input
-                      type="text"
-                      value={customInstallDir || config?.install_dir || ''}
-                      onChange={(e) => setCustomInstallDir(e.target.value)}
-                      placeholder="/Applications/Pioneer/rekordbox 6"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Pioneer App Directory</label>
-                    <input
-                      type="text"
-                      value={customAppDir || config?.app_dir || ''}
-                      onChange={(e) => setCustomAppDir(e.target.value)}
-                      placeholder="~/Library/Pioneer"
-                    />
-                  </div>
-                  <button 
-                    className="btn-primary"
-                    onClick={handleUpdateConfig}
-                    disabled={!customInstallDir || !customAppDir}
-                  >
-                    Update Configuration
-                  </button>
-                </div>
-              )}
-
-              <div className="config-info">
-                <div className="info-item warning">
-                  <AlertCircle size={16} />
-                  <span>No Rekordbox installation detected. Use custom path below or configure paths above.</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Database Path Section - Only show if auto-detection failed or user wants custom path */}
-          {(!config?.db_path || customDbPath) && (
-            <div className="db-section">
-              <div className="db-section-header">
-                <Database size={18} />
-                <h3>Database Location</h3>
-                {config?.db_path && (
-                  <button 
-                    className="btn-link"
-                    onClick={() => setCustomDbPath('')}
-                  >
-                    Use Auto-Detected
-                  </button>
-                )}
-              </div>
-              <p className="section-description">
-                {config?.db_path 
-                  ? "Override auto-detected database path (optional)"
-                  : "Path to master.db (leave empty for auto-detect)"}
-              </p>
-              <div className="db-path-selector">
-                <input
-                  type="text"
-                  value={customDbPath}
-                  onChange={(e) => setCustomDbPath(e.target.value)}
-                  placeholder={config?.db_path || "Path to master.db (leave empty for auto-detect)"}
-                  className="db-path-input"
-                />
-                <button className="btn-secondary" onClick={handleSelectDatabase}>
-                  Browse...
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* Import Section */}
           <div className="db-section">
             <div className="db-section-header">

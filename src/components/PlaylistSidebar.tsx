@@ -174,6 +174,9 @@ export default function PlaylistSidebar({
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
   const [editName, setEditName] = useState('');
   const [showSmartPlaylistModal, setShowSmartPlaylistModal] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addType, setAddType] = useState<'playlist' | 'folder'>('playlist');
+  const [newName, setNewName] = useState('');
 
   const handleAllTracksClick = () => {
     onPlaylistSelect(null);
@@ -215,17 +218,15 @@ export default function PlaylistSidebar({
   };
 
   const handleCreatePlaylist = (parent?: Playlist) => {
-    const name = prompt('Enter playlist name:');
-    if (name && name.trim()) {
-      onCreatePlaylist(name.trim(), parent);
-    }
+    setAddType('playlist');
+    setNewName('');
+    setShowAddModal(true);
   };
 
   const handleCreateFolder = (parent?: Playlist) => {
-    const name = prompt('Enter folder name:');
-    if (name && name.trim()) {
-      onCreateFolder(name.trim(), parent);
-    }
+    setAddType('folder');
+    setNewName('');
+    setShowAddModal(true);
   };
 
   const handleDrop = (playlist: Playlist, trackIds: string[]) => {
@@ -406,6 +407,57 @@ export default function PlaylistSidebar({
           onClose={() => setShowSmartPlaylistModal(false)}
           onCreate={onCreateSmartPlaylist}
         />
+      )}
+
+      {showAddModal && (
+        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
+          <div className="modal-content rename-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Create {addType === 'playlist' ? 'Playlist' : 'Folder'}</h3>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (addType === 'playlist') {
+                    onCreatePlaylist(newName.trim());
+                  } else {
+                    onCreateFolder(newName.trim());
+                  }
+                  setShowAddModal(false);
+                  setNewName('');
+                }
+                if (e.key === 'Escape') {
+                  setShowAddModal(false);
+                }
+              }}
+              placeholder={`New ${addType} name`}
+              autoFocus
+              className="rename-input"
+            />
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => setShowAddModal(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  if (addType === 'playlist') {
+                    onCreatePlaylist(newName.trim());
+                  } else {
+                    onCreateFolder(newName.trim());
+                  }
+                  setShowAddModal(false);
+                  setNewName('');
+                }}
+                disabled={!newName.trim()}
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

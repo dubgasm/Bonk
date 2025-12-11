@@ -13,7 +13,7 @@ export class MusicDatabaseClient {
       
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'Bonk/1.0.0 ( bonk@example.com )'
+          'User-Agent': 'Bonk!/1.0.0 ( bonk@example.com )'
         }
       });
       

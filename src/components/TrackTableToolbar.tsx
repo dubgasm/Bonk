@@ -1,4 +1,4 @@
-import { Music, Search, FileEdit, RotateCcw, CheckSquare, XSquare, AlertTriangle, Copy, FileText, FileAudio, MapPin, Zap } from 'lucide-react';
+import { Music, Search, FileEdit, RotateCcw, CheckSquare, XSquare, AlertTriangle, Copy, FileText, FileAudio, MapPin, Zap, Tag, Disc } from 'lucide-react';
 
 interface TrackTableToolbarProps {
   selectedCount: number;
@@ -17,6 +17,9 @@ interface TrackTableToolbarProps {
   onConvertFormat: () => void;
   onFindLostTracks: () => void;
   onSmartFixes: () => void;
+  onManageTags: () => void;
+  onBatchUpdateTags: () => void;
+  onBatchUpdateGenres: () => void;
 }
 
 export default function TrackTableToolbar({
@@ -36,6 +39,9 @@ export default function TrackTableToolbar({
   onConvertFormat,
   onFindLostTracks,
   onSmartFixes,
+  onManageTags,
+  onBatchUpdateTags,
+  onBatchUpdateGenres,
 }: TrackTableToolbarProps) {
   const hasSelection = selectedCount > 0;
 
@@ -148,6 +154,35 @@ export default function TrackTableToolbar({
         >
           <Zap size={16} />
           <span>Smart Fixes</span>
+        </button>
+
+        <button
+          className="btn btn-sm"
+          onClick={onManageTags}
+          title="Manage Tag Categories"
+        >
+          <FileText size={16} />
+          <span>Tags</span>
+        </button>
+
+        <button
+          className="btn btn-sm"
+          onClick={onBatchUpdateTags}
+          disabled={!hasSelection}
+          title="Batch Update Tags on Selected Tracks"
+        >
+          <Tag size={16} />
+          <span>Batch Update Tags</span>
+        </button>
+
+        <button
+          className="btn btn-sm"
+          onClick={onBatchUpdateGenres}
+          disabled={!hasSelection}
+          title="Batch Update Genres on Selected Tracks"
+        >
+          <Disc size={16} />
+          <span>Batch Update Genres</span>
         </button>
 
         <div className="toolbar-separator" />

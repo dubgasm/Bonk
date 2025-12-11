@@ -1,14 +1,19 @@
 import { useState, useEffect } from 'react';
-import { X, Save } from 'lucide-react';
+import { X, Save, Tag, Plus, XCircle } from 'lucide-react';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { Track } from '../types/track';
 
 export default function TrackEditor() {
-  const { selectedTrack, setSelectedTrack, updateTrack } = useLibraryStore();
+  const { selectedTrack, setSelectedTrack, updateTrack, genres } = useLibraryStore();
+  const [newTagCategory, setNewTagCategory] = useState('');
+  const [newTagName, setNewTagName] = useState('');
   const [editedTrack, setEditedTrack] = useState<Track | null>(null);
+  const [genreInput, setGenreInput] = useState('');
+  const [showGenreDropdown, setShowGenreDropdown] = useState(false);
 
   useEffect(() => {
     setEditedTrack(selectedTrack);
+    setGenreInput(selectedTrack?.Genre || '');
   }, [selectedTrack]);
 
   if (!editedTrack) return null;
@@ -22,6 +27,37 @@ export default function TrackEditor() {
 
   const handleChange = (field: keyof Track, value: string) => {
     setEditedTrack({ ...editedTrack, [field]: value });
+  };
+
+  const handleGenreChange = (value: string) => {
+    setGenreInput(value);
+    setShowGenreDropdown(true);
+    handleChange('Genre', value);
+  };
+
+  const handleGenreSelect = (genre: string) => {
+    setGenreInput(genre);
+    setShowGenreDropdown(false);
+    handleChange('Genre', genre);
+  };
+
+  // Filter genres based on input
+  const filteredGenres = genres.filter((g) =>
+    g.toLowerCase().includes(genreInput.toLowerCase())
+  );
+
+  const handleAddTag = () => {
+    if (!newTagName.trim()) return;
+    const nextTags = [...(editedTrack.tags || []), { category: newTagCategory.trim() || 'Uncategorized', name: newTagName.trim() }];
+    setEditedTrack({ ...editedTrack, tags: nextTags });
+    setNewTagCategory('');
+    setNewTagName('');
+  };
+
+  const handleRemoveTag = (index: number) => {
+    const next = [...(editedTrack.tags || [])];
+    next.splice(index, 1);
+    setEditedTrack({ ...editedTrack, tags: next });
   };
 
   return (
@@ -61,13 +97,64 @@ export default function TrackEditor() {
           />
         </div>
 
-        <div className="form-group">
+        <div className="form-group" style={{ position: 'relative' }}>
           <label>Genre</label>
           <input
             type="text"
-            value={editedTrack.Genre || ''}
-            onChange={(e) => handleChange('Genre', e.target.value)}
+            value={genreInput}
+            onChange={(e) => handleGenreChange(e.target.value)}
+            onFocus={() => setShowGenreDropdown(true)}
+            onBlur={() => {
+              // Delay hiding to allow dropdown click
+              setTimeout(() => setShowGenreDropdown(false), 200);
+            }}
+            placeholder="Type or select a genre"
+            list="genre-list"
           />
+          {showGenreDropdown && filteredGenres.length > 0 && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                right: 0,
+                zIndex: 1000,
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                marginTop: '4px',
+                maxHeight: '200px',
+                overflowY: 'auto',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+              }}
+            >
+              {filteredGenres.slice(0, 10).map((genre) => (
+                <div
+                  key={genre}
+                  onClick={() => handleGenreSelect(genre)}
+                  style={{
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    borderBottom: '1px solid var(--border)',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'var(--bg-hover)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'var(--bg-secondary)';
+                  }}
+                >
+                  {genre}
+                </div>
+              ))}
+            </div>
+          )}
+          <datalist id="genre-list">
+            {genres.map((genre) => (
+              <option key={genre} value={genre} />
+            ))}
+          </datalist>
         </div>
 
         <div className="form-row">
@@ -153,6 +240,51 @@ export default function TrackEditor() {
             onChange={(e) => handleChange('Comments', e.target.value)}
             rows={3}
           />
+        </div>
+
+        <div className="form-group">
+          <label className="tags-label">
+            <Tag size={16} />
+            Custom Tags
+          </label>
+          <div className="tags-input-row">
+            <input
+              type="text"
+              placeholder="Category (optional)"
+              value={newTagCategory}
+              onChange={(e) => setNewTagCategory(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Tag name"
+              value={newTagName}
+              onChange={(e) => setNewTagName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleAddTag();
+                }
+              }}
+            />
+            <button className="btn btn-secondary tags-add-btn" type="button" onClick={handleAddTag} disabled={!newTagName.trim()}>
+              <Plus size={14} />
+              Add
+            </button>
+          </div>
+          <div className="tag-pill-list">
+            {(editedTrack.tags || []).map((tag, idx) => (
+              <span key={`${tag.category}-${tag.name}-${idx}`} className="tag-pill">
+                <span className="tag-cat">{tag.category || 'Uncategorized'}</span>
+                <span className="tag-name">{tag.name}</span>
+                <button className="tag-remove" onClick={() => handleRemoveTag(idx)} type="button" title="Remove tag">
+                  <XCircle size={14} />
+                </button>
+              </span>
+            ))}
+            {(editedTrack.tags || []).length === 0 && (
+              <span className="tag-empty">No custom tags yet</span>
+            )}
+          </div>
         </div>
 
         <div className="editor-actions">

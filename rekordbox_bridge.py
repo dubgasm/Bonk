@@ -21,6 +21,7 @@ try:
     from pyrekordbox.config import __config__ as pyrekordbox_config, get_config
     from pyrekordbox.utils import get_rekordbox_pid
     from pyrekordbox.db6.smartlist import SmartList, Property, Operator
+    from pyrekordbox.db6.tables import PlaylistType, DjmdSongPlaylist
 except ImportError as e:
     print(json.dumps({"success": False, "error": f"Failed to import pyrekordbox: {str(e)}"}))
     sys.exit(1)
@@ -88,18 +89,60 @@ class RekordboxBridge:
                 self.db = Rekordbox6Database(path=db_path)
             else:
                 print("Opening database using auto-detection...", file=sys.stderr)
-                self.db = Rekordbox6Database()
-                # Get the actual path that was used
                 try:
-                    if hasattr(self.db, 'engine') and self.db.engine:
-                        url = str(self.db.engine.url)
-                        if 'sqlite' in url and ':///' in url:
-                            parts = url.split(':///')
-                            if len(parts) > 1:
-                                actual_path = parts[1].split('?')[0]
-                                actual_path = os.path.abspath(actual_path)
-                except:
-                    pass
+                    self.db = Rekordbox6Database()
+                    # Get the actual path that was used
+                    try:
+                        if hasattr(self.db, 'engine') and self.db.engine:
+                            url = str(self.db.engine.url)
+                            if 'sqlite' in url and ':///' in url:
+                                parts = url.split(':///')
+                                if len(parts) > 1:
+                                    actual_path = parts[1].split('?')[0]
+                                    actual_path = os.path.abspath(actual_path)
+                    except:
+                        pass
+                except Exception as auto_error:
+                    # Auto-detection failed - provide helpful error message
+                    error_msg = str(auto_error)
+                    
+                    # Check common locations
+                    common_paths = []
+                    home_dir = os.path.expanduser("~")
+                    
+                    # macOS common locations
+                    if sys.platform == "darwin":
+                        common_paths = [
+                            os.path.join(home_dir, "Library", "Pioneer", "rekordbox", "master.db"),
+                            os.path.join(home_dir, "Library", "Pioneer", "rekordbox", "datafile.edb"),
+                            "/Applications/Pioneer/rekordbox 6/master.db",
+                            "/Applications/Pioneer/rekordbox 7/master.db",
+                        ]
+                    # Windows common locations
+                    elif sys.platform == "win32":
+                        appdata = os.environ.get("APPDATA", "")
+                        if appdata:
+                            common_paths = [
+                                os.path.join(appdata, "Pioneer", "rekordbox", "master.db"),
+                                os.path.join(appdata, "Pioneer", "rekordbox", "datafile.edb"),
+                            ]
+                    
+                    # Check if any common paths exist
+                    found_paths = [p for p in common_paths if os.path.exists(p)]
+                    
+                    suggestion = ""
+                    if found_paths:
+                        suggestion = f"\n\nFound database at: {found_paths[0]}\nPlease use 'Browse' to select this file manually."
+                    else:
+                        suggestion = "\n\nCommon locations to check:\n"
+                        for path in common_paths:
+                            suggestion += f"  - {path}\n"
+                        suggestion += "\nPlease use 'Browse' to manually select your master.db file."
+                    
+                    return {
+                        "success": False,
+                        "error": f"Failed to open database: {error_msg}{suggestion}"
+                    }
             
             # Verify database file exists and get its info
             if actual_path:
@@ -123,9 +166,21 @@ class RekordboxBridge:
         except Exception as e:
             import traceback
             traceback.print_exc(file=sys.stderr)
+            error_msg = str(e)
+            
+            # Provide helpful suggestions if auto-detection failed
+            if "No Rekordbox" in error_msg or "directory found" in error_msg:
+                home_dir = os.path.expanduser("~")
+                if sys.platform == "darwin":
+                    common_db = os.path.join(home_dir, "Library", "Pioneer", "rekordbox", "master.db")
+                    if os.path.exists(common_db):
+                        error_msg += f"\n\nFound database at: {common_db}\nPlease use 'Browse' to select this file."
+                    else:
+                        error_msg += f"\n\nCommon locations to check:\n  - {common_db}\n  - ~/Library/Pioneer/rekordbox/datafile.edb\n\nPlease use 'Browse' to manually select your master.db file."
+            
             return {
                 "success": False,
-                "error": f"Failed to open database: {str(e)}"
+                "error": f"Failed to open database: {error_msg}"
             }
     
     def close_database(self) -> Dict[str, Any]:
@@ -245,6 +300,156 @@ class RekordboxBridge:
                 "error": f"Failed to backup database: {str(e)}"
             }
     
+    def check_database_integrity(self) -> Dict[str, Any]:
+        """Check database integrity using SQLite PRAGMA integrity_check"""
+        try:
+            if not self.db:
+                return {
+                    "success": False,
+                    "error": "Database not open"
+                }
+            
+            # Get raw connection to run PRAGMA commands
+            connection = self.db.engine.raw_connection()
+            cursor = connection.cursor()
+            
+            # Run integrity check
+            cursor.execute("PRAGMA integrity_check")
+            result = cursor.fetchone()
+            
+            cursor.close()
+            connection.close()
+            
+            integrity_ok = result and result[0] == "ok"
+            message = result[0] if result else "Unknown integrity status"
+            
+            # Provide more helpful error messages for common corruption types
+            if not integrity_ok:
+                if "index" in message.lower() and "wrong" in message.lower():
+                    message += "\n\nThis indicates index corruption. The repair function will rebuild all indexes to fix this issue."
+                elif "malformed" in message.lower() or "corrupt" in message.lower():
+                    message += "\n\nThis indicates database file corruption. The repair function will attempt to fix this using VACUUM."
+            
+            return {
+                "success": True,
+                "integrity_ok": integrity_ok,
+                "message": message
+            }
+        except Exception as e:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            return {
+                "success": False,
+                "error": f"Failed to check database integrity: {str(e)}"
+            }
+    
+    def repair_database(self) -> Dict[str, Any]:
+        """Attempt to repair database using SQLite VACUUM"""
+        db_path = None
+        try:
+            if not self.db:
+                return {
+                    "success": False,
+                    "error": "Database not open"
+                }
+            
+            # Check if Rekordbox is running
+            pid = get_rekordbox_pid()
+            if pid:
+                return {
+                    "success": False,
+                    "error": "Rekordbox is running. Please close Rekordbox before repairing the database."
+                }
+            
+            # Get the database path before closing
+            if hasattr(self.db, 'engine') and self.db.engine:
+                url = str(self.db.engine.url)
+                if 'sqlite' in url:
+                    # Handle both encrypted and unencrypted URLs
+                    if '@' in url:
+                        # Encrypted: sqlite+pysqlcipher://:***@/path/to/db
+                        path_part = url.split('@', 1)[1].split('?')[0]
+                        if path_part.startswith('//'):
+                            path_part = path_part[1:]
+                        db_path = os.path.abspath(path_part)
+                    elif ':///' in url:
+                        # Unencrypted: sqlite:///path/to/db
+                        parts = url.split(':///')
+                        if len(parts) > 1:
+                            db_path = parts[1].split('?')[0]
+                            db_path = os.path.abspath(db_path)
+            
+            if not db_path or not os.path.exists(db_path):
+                return {
+                    "success": False,
+                    "error": "Could not determine database path"
+                }
+            
+            # Close the database connection first
+            self.db.close()
+            
+            # Create a backup before repair
+            backup_result = self.backup_database(db_path)
+            if not backup_result.get("success"):
+                print(f"Warning: Could not create backup before repair: {backup_result.get('error')}", file=sys.stderr)
+            
+            # Reopen database to get connection
+            self.db = Rekordbox6Database(path=db_path)
+            
+            # Get connection for repair operations
+            connection = self.db.engine.raw_connection()
+            cursor = connection.cursor()
+            
+            # First, rebuild all indexes to fix index corruption
+            print("Step 1: Rebuilding indexes to fix index corruption...", file=sys.stderr)
+            try:
+                cursor.execute("REINDEX")
+                print("✓ Indexes rebuilt successfully", file=sys.stderr)
+            except Exception as e:
+                print(f"Warning: REINDEX failed: {e}", file=sys.stderr)
+                # Continue with VACUUM anyway
+            
+            # Then run VACUUM to repair and compact the database
+            print("Step 2: Running VACUUM to repair and compact database...", file=sys.stderr)
+            cursor.execute("VACUUM")
+            print("✓ VACUUM completed successfully", file=sys.stderr)
+            
+            cursor.close()
+            connection.close()
+            
+            # Close and reopen to verify
+            self.db.close()
+            self.db = Rekordbox6Database(path=db_path)
+            
+            # Check integrity after repair
+            integrity_result = self.check_database_integrity()
+            
+            if integrity_result.get("integrity_ok"):
+                return {
+                    "success": True,
+                    "message": "Database repaired successfully",
+                    "integrity_ok": True
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Database repair completed but integrity check failed: {integrity_result.get('message')}",
+                    "integrity_ok": False
+                }
+        except Exception as e:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            # Try to reopen database
+            try:
+                if db_path and os.path.exists(db_path):
+                    self.db = Rekordbox6Database(path=db_path)
+            except:
+                pass
+            return {
+                "success": False,
+                "error": f"Failed to repair database: {str(e)}"
+            }
+    
     def import_from_database(self, db_path: Optional[str] = None) -> Dict[str, Any]:
         """Import tracks and playlists from Rekordbox database"""
         try:
@@ -278,6 +483,29 @@ class RekordboxBridge:
                 if content.BPM is not None:
                     bpm_value = content.BPM / 100.0
                 
+                # Collect MyTag names if available
+                try:
+                    raw_mytags = list(content.MyTagNames) if hasattr(content, "MyTagNames") else []
+                except Exception:
+                    raw_mytags = []
+
+                # Parse MyTags into category + name using Rekordbox's four buckets
+                # Expected format: "Category: Name" where Category is one of Genre/Components/Situation/Custom
+                allowed_categories = {"Genre", "Components", "Situation", "Custom"}
+                tags = []
+                for mt in raw_mytags:
+                    if not mt:
+                        continue
+                    if ":" in mt:
+                        cat, val = mt.split(":", 1)
+                        cat = cat.strip()
+                        val = val.strip()
+                        if cat in allowed_categories and val:
+                            tags.append({"category": cat, "name": val, "source": "rekordbox"})
+                            continue
+                    # Fallback: unknown format, treat as Custom with full string
+                    tags.append({"category": "Custom", "name": mt.strip(), "source": "rekordbox"})
+
                 track = {
                     "TrackID": str(content.ID),
                     "Name": content.Title or "",
@@ -300,6 +528,7 @@ class RekordboxBridge:
                     "PlayCount": str(content.DJPlayCount) if content.DJPlayCount else "",
                     "Mix": content.Subtitle or "",  # Using Subtitle field for Mix
                     "Color": str(content.ColorID) if content.ColorID else "",
+                    "tags": tags,
                 }
                 tracks.append(track)
             
@@ -351,18 +580,41 @@ class RekordboxBridge:
     def _parse_playlist(self, playlist) -> Optional[Dict[str, Any]]:
         """Parse a playlist object from the database"""
         try:
+            # Determine type first to know how to get contents
+            try:
+                is_folder = playlist.is_folder
+                is_smart = playlist.is_smart_playlist
+            except Exception as e:
+                print(f"  Warning: Could not determine playlist type, using Attribute: {e}", file=sys.stderr)
+                # Fallback: check Attribute directly
+                is_folder = getattr(playlist, 'Attribute', PlaylistType.PLAYLIST) == PlaylistType.FOLDER
+                is_smart = getattr(playlist, 'Attribute', PlaylistType.PLAYLIST) == PlaylistType.SMART_PLAYLIST
+            
             # Get track IDs in playlist
             track_ids = []
-            try:
-                if hasattr(playlist, 'Songs') and playlist.Songs:
-                    for song in playlist.Songs:
-                        try:
-                            if song.Content:
-                                track_ids.append(str(song.Content.ID))
-                        except Exception as e:
-                            print(f"  Warning: Failed to get content for song: {e}", file=sys.stderr)
-            except Exception as e:
-                print(f"  Warning: Failed to get songs: {e}", file=sys.stderr)
+            if is_smart:
+                # For smart playlists, use get_playlist_contents to evaluate the smart list
+                try:
+                    contents = list(self.db.get_playlist_contents(playlist))
+                    for content in contents:
+                        track_ids.append(str(content.ID))
+                    print(f"  Smart playlist '{playlist.Name}' has {len(track_ids)} matching tracks", file=sys.stderr)
+                except Exception as e:
+                    print(f"  Warning: Failed to get smart playlist contents: {e}", file=sys.stderr)
+                    import traceback
+                    traceback.print_exc(file=sys.stderr)
+            else:
+                # For regular playlists, get tracks from Songs relationship
+                try:
+                    if hasattr(playlist, 'Songs') and playlist.Songs:
+                        for song in playlist.Songs:
+                            try:
+                                if song.Content:
+                                    track_ids.append(str(song.Content.ID))
+                            except Exception as e:
+                                print(f"  Warning: Failed to get content for song: {e}", file=sys.stderr)
+                except Exception as e:
+                    print(f"  Warning: Failed to get songs: {e}", file=sys.stderr)
             
             # Get child playlists
             children = []
@@ -375,22 +627,49 @@ class RekordboxBridge:
             except Exception as e:
                 print(f"  Warning: Failed to get children: {e}", file=sys.stderr)
             
-            # Determine type - is_folder is a property, not a method
-            try:
-                is_folder = playlist.is_folder
-            except Exception as e:
-                print(f"  Warning: Could not determine if folder, using Attribute: {e}", file=sys.stderr)
-                # Fallback: check Attribute directly (1 = folder, 0 = playlist)
-                from pyrekordbox.db6.tables import PlaylistType
-                is_folder = getattr(playlist, 'Attribute', PlaylistType.PLAYLIST) == PlaylistType.FOLDER
+            playlist_type = "0" if is_folder else ("2" if is_smart else "1")  # 0 = folder, 1 = playlist, 2 = smart
             
             result = {
                 "Name": playlist.Name or "Unnamed",
-                "Type": "0" if is_folder else "1",  # 0 = folder, 1 = playlist
+                "Type": playlist_type,
                 "KeyType": "TrackID",
                 "Entries": track_ids,
                 "Children": children
             }
+            
+            # Extract smart playlist conditions if it's a smart playlist
+            if is_smart and hasattr(playlist, 'SmartList') and playlist.SmartList:
+                try:
+                    from pyrekordbox.db6.smartlist import SmartList
+                    smart_list = SmartList()
+                    smart_list.parse(playlist.SmartList)
+                    
+                    # Convert conditions to Bonk format
+                    conditions = []
+                    for cond in smart_list.conditions:
+                        # Map operator from int to string
+                        operator_map = {
+                            1: "EQUAL", 2: "NOT_EQUAL", 3: "GREATER", 4: "LESS",
+                            5: "IN_RANGE", 6: "IN_LAST", 7: "NOT_IN_LAST",
+                            8: "CONTAINS", 9: "NOT_CONTAINS", 10: "STARTS_WITH", 11: "ENDS_WITH"
+                        }
+                        operator_str = operator_map.get(cond.operator, "EQUAL")
+                        
+                        condition = {
+                            "property": cond.property,
+                            "operator": operator_str,
+                            "value_left": str(cond.value_left) if cond.value_left is not None else "",
+                            "value_right": str(cond.value_right) if cond.value_right is not None else None
+                        }
+                        conditions.append(condition)
+                    
+                    result["conditions"] = conditions
+                    result["logicalOperator"] = smart_list.logical_operator
+                    print(f"  Extracted {len(conditions)} conditions for smart playlist", file=sys.stderr)
+                except Exception as e:
+                    print(f"  Warning: Failed to parse smart playlist conditions: {e}", file=sys.stderr)
+                    import traceback
+                    traceback.print_exc(file=sys.stderr)
             
             print(f"  Parsed: {result['Name']} - Type: {result['Type']}, Tracks: {len(track_ids)}, Children: {len(children)}", file=sys.stderr)
             return result
@@ -700,6 +979,26 @@ class RekordboxBridge:
                             if key and existing.KeyID != key.ID:
                                 existing.KeyID = key.ID
                                 track_updated = True
+
+                        # Update MyTags from Bonk custom tags (map categories to Rekordbox buckets)
+                        if track.get("tags") is not None:
+                            try:
+                                allowed_categories = {"Genre", "Components", "Situation", "Custom"}
+                                tag_names = []
+                                for t in track.get("tags", []):
+                                    name = t.get("name")
+                                    if not name:
+                                        continue
+                                    cat = t.get("category") or ""
+                                    if cat in allowed_categories:
+                                        tag_names.append(f"{cat}: {name}")
+                                    else:
+                                        # Fallback to Custom bucket
+                                        tag_names.append(f"Custom: {name}")
+                                existing.MyTagNames = tag_names
+                                track_updated = True
+                            except Exception as e:
+                                print(f"Failed to update MyTags for track {track.get('Name')}: {e}", file=sys.stderr)
                         
                         if track_updated:
                             updated_count += 1
@@ -763,6 +1062,24 @@ class RekordboxBridge:
                                 key = get_or_create_key(key_name)
                                 if key:
                                     new_content.KeyID = key.ID
+
+                            # Apply MyTags from Bonk custom tags (map categories to Rekordbox buckets)
+                            if track.get("tags"):
+                                try:
+                                    allowed_categories = {"Genre", "Components", "Situation", "Custom"}
+                                    tag_names = []
+                                    for t in track.get("tags", []):
+                                        name = t.get("name")
+                                        if not name:
+                                            continue
+                                        cat = t.get("category") or ""
+                                        if cat in allowed_categories:
+                                            tag_names.append(f"{cat}: {name}")
+                                        else:
+                                            tag_names.append(f"Custom: {name}")
+                                    new_content.MyTagNames = tag_names
+                                except Exception as e:
+                                    print(f"Failed to set MyTags for new track {track.get('Name')}: {e}", file=sys.stderr)
                             
                             added_count += 1
                         except ValueError as e:
@@ -808,13 +1125,12 @@ class RekordboxBridge:
                 if tracks_to_delete:
                     print(f"Found {len(tracks_to_delete)} tracks to delete from Rekordbox", file=sys.stderr)
                     # Delete tracks from database
-                    from pyrekordbox.db6 import tables
                     for content in tracks_to_delete:
                         try:
                             # Remove from all playlists first
                             # Get all playlist entries for this track
-                            playlist_entries = self.db.query(tables.DjmdSongPlaylist).filter(
-                                tables.DjmdSongPlaylist.ContentID == content.ID
+                            playlist_entries = self.db.query(DjmdSongPlaylist).filter(
+                                DjmdSongPlaylist.ContentID == content.ID
                             ).all()
                             
                             for entry in playlist_entries:
@@ -865,21 +1181,352 @@ class RekordboxBridge:
                     else:
                         raise
                 except Exception as e:
-                    print(f"ERROR during commit: {e}", file=sys.stderr)
+                    error_str = str(e)
+                    print(f"ERROR during commit: {error_str}", file=sys.stderr)
                     import traceback
                     traceback.print_exc(file=sys.stderr)
-                    return {
-                        "success": False,
-                        "error": f"Failed to commit changes: {str(e)}",
-                        "added": added_count,
-                        "updated": updated_count,
-                        "deleted": deleted_count,
-                        "skipped": skipped_count
-                    }
+                    
+                    # Try to rollback on error
+                    try:
+                        self.db.rollback()
+                        print("✓ Rolled back transaction due to commit error", file=sys.stderr)
+                    except Exception as rollback_error:
+                        print(f"Error rolling back: {rollback_error}", file=sys.stderr)
+                    
+                    # Check if it's a corruption error - try committing without autoincrement
+                    if "malformed" in error_str.lower() or "corrupt" in error_str.lower() or "database disk image" in error_str.lower():
+                        print("Attempting to commit without USN autoincrement...", file=sys.stderr)
+                        try:
+                            self.db.commit(autoinc=False)
+                            print("✓ Committed successfully without USN updates", file=sys.stderr)
+                            return {
+                                "success": True,
+                                "added": added_count,
+                                "updated": updated_count,
+                                "deleted": deleted_count,
+                                "skipped": skipped_count,
+                                "warning": "Committed without USN updates due to database corruption"
+                            }
+                        except Exception as retry_error:
+                            return {
+                                "success": False,
+                                "error": f"Database corruption detected: {error_str}",
+                                "suggestion": "The database appears to be corrupted. Please restore from a backup.",
+                                "added": added_count,
+                                "updated": updated_count,
+                                "deleted": deleted_count,
+                                "skipped": skipped_count
+                            }
+                    else:
+                        return {
+                            "success": False,
+                            "error": f"Failed to commit changes: {error_str}",
+                            "added": added_count,
+                            "updated": updated_count,
+                            "deleted": deleted_count,
+                            "skipped": skipped_count
+                        }
             else:
                 print("No changes to commit (all tracks skipped or unchanged)", file=sys.stderr)
             
-            print(f"Export summary: {added_count} added, {updated_count} updated, {deleted_count} deleted, {skipped_count} skipped", file=sys.stderr)
+            # Step 7: Export playlists
+            playlist_added_count = 0
+            playlist_updated_count = 0
+            playlist_skipped_count = 0
+            
+            if playlists:
+                print(f"Step 7: Processing playlists...", file=sys.stderr)
+                print(f"  Found {len(playlists)} playlists to export", file=sys.stderr)
+                
+                # Create a map of Bonk TrackID to Rekordbox Content ID
+                track_id_to_content_id = {}
+                for content in self.db.get_content():
+                    # Try to match by path - we'll need to normalize paths
+                    path = content.FolderPath
+                    if path:
+                        normalized_path = normalize_path_for_comparison(path)
+                        # Find matching track in Bonk library
+                        for track in tracks:
+                            track_location = track.get("Location", "")
+                            track_normalized = normalize_path_for_comparison(track_location)
+                            if track_normalized == normalized_path:
+                                track_id_to_content_id[track.get("TrackID")] = str(content.ID)
+                                break
+                
+                print(f"  Mapped {len(track_id_to_content_id)} tracks to Rekordbox content IDs", file=sys.stderr)
+                
+                # Create a map of existing playlists by name (for updating)
+                existing_playlists = {}
+                for playlist in self.db.get_playlist():
+                    existing_playlists[playlist.Name] = playlist
+                
+                # Process playlists in order: folders first, then playlists
+                # This ensures parent folders exist before creating child playlists
+                
+                # Separate folders and playlists
+                folders = [p for p in playlists if p.get("Type") == "0"]
+                regular_playlists = [p for p in playlists if p.get("Type") == "1"]
+                smart_playlists = [p for p in playlists if p.get("Type") == "2"]
+                print(f"Step 7: Found {len(folders)} folders, {len(regular_playlists)} regular playlists, {len(smart_playlists)} smart playlists", file=sys.stderr)
+                
+                # Process folders first
+                for folder in folders:
+                    try:
+                        folder_name = folder.get("Name", "Unnamed")
+                        parent_name = None
+                        
+                        # Find parent if specified
+                        parent_playlist = None
+                        if folder.get("ParentID"):
+                            # Look up parent by name or ID
+                            for p in playlists:
+                                if p.get("PlaylistID") == folder.get("ParentID") or p.get("Name") == folder.get("ParentID"):
+                                    parent_name = p.get("Name")
+                                    break
+                        
+                        if parent_name:
+                            parent_playlist = existing_playlists.get(parent_name)
+                        
+                        # Check if folder already exists
+                        existing = existing_playlists.get(folder_name)
+                        if existing:
+                            # Update existing folder (just update parent if changed)
+                            if parent_playlist and existing.ParentID != parent_playlist.ID:
+                                existing.ParentID = parent_playlist.ID
+                                playlist_updated_count += 1
+                            else:
+                                playlist_skipped_count += 1
+                        else:
+                            # Create new folder
+                            new_folder = self.db.create_playlist_folder(folder_name, parent=parent_playlist)
+                            existing_playlists[folder_name] = new_folder
+                            playlist_added_count += 1
+                            print(f"  Created folder: {folder_name}", file=sys.stderr)
+                    except Exception as e:
+                        errors.append(f"Failed to export folder {folder.get('Name', 'unknown')}: {str(e)}")
+                        playlist_skipped_count += 1
+                
+                # Process regular playlists
+                for playlist in regular_playlists:
+                    try:
+                        playlist_name = playlist.get("Name", "Unnamed")
+                        parent_name = None
+                        
+                        # Find parent if specified
+                        parent_playlist = None
+                        if playlist.get("ParentID"):
+                            for p in playlists:
+                                if p.get("PlaylistID") == playlist.get("ParentID") or p.get("Name") == playlist.get("ParentID"):
+                                    parent_name = p.get("Name")
+                                    break
+                        
+                        if parent_name:
+                            parent_playlist = existing_playlists.get(parent_name)
+                        
+                        # Check if playlist already exists
+                        existing = existing_playlists.get(playlist_name)
+                        
+                        # Get track entries
+                        entries = playlist.get("Entries", [])
+                        content_ids = []
+                        for track_id in entries:
+                            content_id = track_id_to_content_id.get(track_id)
+                            if content_id:
+                                content_ids.append(content_id)
+                            else:
+                                # Track not found in Rekordbox, skip it
+                                pass
+                        
+                        if existing:
+                            # Update existing playlist
+                            # Clear existing entries
+                            existing_entries = self.db.query(DjmdSongPlaylist).filter(
+                                DjmdSongPlaylist.PlaylistID == existing.ID
+                            ).all()
+                            for entry in existing_entries:
+                                self.db.session.delete(entry)
+                            
+                            # Add new entries
+                            for idx, content_id in enumerate(content_ids):
+                                try:
+                                    content = self.db.get_content(ID=int(content_id))
+                                    if content is None:
+                                        print(f"  Warning: Track {content_id} not found in database, skipping", file=sys.stderr)
+                                        continue
+                                    entry = DjmdSongPlaylist(
+                                        PlaylistID=existing.ID,
+                                        ContentID=content.ID,
+                                        TrackNo=idx + 1
+                                    )
+                                    self.db.session.add(entry)
+                                except Exception as e:
+                                    print(f"  Warning: Could not add track {content_id} to playlist: {e}", file=sys.stderr)
+                            
+                            # Update parent if changed
+                            if parent_playlist and existing.ParentID != parent_playlist.ID:
+                                existing.ParentID = parent_playlist.ID
+                            
+                            playlist_updated_count += 1
+                            print(f"  Updated playlist: {playlist_name} ({len(content_ids)} tracks)", file=sys.stderr)
+                        else:
+                            # Create new playlist
+                            new_playlist = self.db.create_playlist(playlist_name, parent=parent_playlist)
+                            existing_playlists[playlist_name] = new_playlist
+                            
+                            # Add tracks to playlist
+                            for idx, content_id in enumerate(content_ids):
+                                try:
+                                    content = self.db.get_content(ID=int(content_id))
+                                    if content is None:
+                                        print(f"  Warning: Track {content_id} not found in database, skipping", file=sys.stderr)
+                                        continue
+                                    entry = DjmdSongPlaylist(
+                                        PlaylistID=new_playlist.ID,
+                                        ContentID=content.ID,
+                                        TrackNo=idx + 1
+                                    )
+                                    self.db.session.add(entry)
+                                except Exception as e:
+                                    print(f"  Warning: Could not add track {content_id} to playlist: {e}", file=sys.stderr)
+                            
+                            playlist_added_count += 1
+                            print(f"  Created playlist: {playlist_name} ({len(content_ids)} tracks)", file=sys.stderr)
+                    except Exception as e:
+                        errors.append(f"Failed to export playlist {playlist.get('Name', 'unknown')}: {str(e)}")
+                        import traceback
+                        traceback.print_exc(file=sys.stderr)
+                        playlist_skipped_count += 1
+                
+                # Process smart playlists
+                print(f"  Processing {len(smart_playlists)} smart playlists...", file=sys.stderr)
+                for playlist in smart_playlists:
+                    try:
+                        playlist_name = playlist.get("Name", "Unnamed")
+                        conditions = playlist.get("conditions", [])
+                        logical_operator = playlist.get("logicalOperator", 1)  # Default to ALL (1)
+                        print(f"  Processing smart playlist: {playlist_name} ({len(conditions)} conditions)", file=sys.stderr)
+                        
+                        # Find parent if specified
+                        parent_playlist = None
+                        parent_name = None
+                        if playlist.get("ParentID"):
+                            for p in playlists:
+                                if p.get("PlaylistID") == playlist.get("ParentID") or p.get("Name") == playlist.get("ParentID"):
+                                    parent_name = p.get("Name")
+                                    break
+                        
+                        if parent_name:
+                            parent_playlist = existing_playlists.get(parent_name)
+                        
+                        # Check if smart playlist already exists
+                        existing = existing_playlists.get(playlist_name)
+                        
+                        if not conditions:
+                            # No conditions provided - skip
+                            playlist_skipped_count += 1
+                            print(f"  Skipped smart playlist (no conditions): {playlist_name}", file=sys.stderr)
+                            continue
+                        
+                        # Normalize conditions: Map CUSTOM_TAG to MYTAG for Rekordbox
+                        normalized_conditions = []
+                        for cond in conditions:
+                            normalized_cond = dict(cond)
+                            if cond.get("property") == "CUSTOM_TAG":
+                                normalized_cond["property"] = "MYTAG"
+                            normalized_conditions.append(normalized_cond)
+                        
+                        # Create SmartList object
+                        smart = SmartList(logical_operator=logical_operator)
+                        
+                        # Add conditions to SmartList
+                        for condition in normalized_conditions:
+                            property_name = condition.get("property", "").upper()  # Ensure uppercase
+                            operator_value = condition.get("operator", "").upper()  # Ensure uppercase
+                            value_left = condition.get("value_left", "")
+                            value_right = condition.get("value_right")
+                            
+                            # Map string property names to Property enum
+                            property_enum = getattr(Property, property_name, None)
+                            if not property_enum:
+                                print(f"  Warning: Unknown property '{property_name}' in smart playlist '{playlist_name}', skipping condition", file=sys.stderr)
+                                continue
+                            
+                            # Map string operators to Operator enum
+                            operator_map = {
+                                "EQUAL": Operator.EQUAL, "NOT_EQUAL": Operator.NOT_EQUAL,
+                                "GREATER": Operator.GREATER, "LESS": Operator.LESS,
+                                "IN_RANGE": Operator.IN_RANGE, "IN_LAST": Operator.IN_LAST,
+                                "NOT_IN_LAST": Operator.NOT_IN_LAST, "CONTAINS": Operator.CONTAINS,
+                                "NOT_CONTAINS": Operator.NOT_CONTAINS, "STARTS_WITH": Operator.STARTS_WITH,
+                                "ENDS_WITH": Operator.ENDS_WITH
+                            }
+                            operator_enum = operator_map.get(operator_value)
+                            if operator_enum is None:
+                                print(f"  Warning: Unknown operator '{operator_value}' in smart playlist '{playlist_name}', skipping condition", file=sys.stderr)
+                                continue
+                            
+                            # Add condition to smart list
+                            if value_right:
+                                smart.add_condition(property_enum, operator_enum, value_left, value_right)
+                            else:
+                                smart.add_condition(property_enum, operator_enum, value_left)
+                        
+                        if existing and existing.is_smart_playlist:
+                            # Update existing smart playlist
+                            # Delete and recreate (Rekordbox doesn't have a direct update method)
+                            try:
+                                self.db.delete_playlist(existing)
+                                new_smart = self.db.create_smart_playlist(playlist_name, smart, parent=parent_playlist)
+                                existing_playlists[playlist_name] = new_smart
+                                playlist_updated_count += 1
+                                print(f"  Updated smart playlist: {playlist_name} ({len(conditions)} conditions)", file=sys.stderr)
+                            except Exception as e:
+                                errors.append(f"Failed to update smart playlist {playlist_name}: {str(e)}")
+                                playlist_skipped_count += 1
+                        else:
+                            # Create new smart playlist
+                            new_smart = self.db.create_smart_playlist(playlist_name, smart, parent=parent_playlist)
+                            existing_playlists[playlist_name] = new_smart
+                            playlist_added_count += 1
+                            print(f"  Created smart playlist: {playlist_name} ({len(conditions)} conditions)", file=sys.stderr)
+                    except Exception as e:
+                        errors.append(f"Failed to export smart playlist {playlist.get('Name', 'unknown')}: {str(e)}")
+                        import traceback
+                        traceback.print_exc(file=sys.stderr)
+                        playlist_skipped_count += 1
+                
+                # Commit playlist changes
+                if playlist_added_count > 0 or playlist_updated_count > 0:
+                    try:
+                        print(f"Step 8: Committing playlist changes ({playlist_added_count} added, {playlist_updated_count} updated)...", file=sys.stderr)
+                        self.db.commit()
+                        print("✓ Playlist changes committed successfully", file=sys.stderr)
+                    except Exception as e:
+                        error_str = str(e)
+                        print(f"ERROR committing playlists: {error_str}", file=sys.stderr)
+                        
+                        # Try to rollback
+                        try:
+                            self.db.rollback()
+                            print("✓ Rolled back playlist transaction", file=sys.stderr)
+                        except Exception as rollback_error:
+                            print(f"Error rolling back playlist changes: {rollback_error}", file=sys.stderr)
+                        
+                        # Check if it's a corruption error - try committing without autoincrement
+                        if "malformed" in error_str.lower() or "corrupt" in error_str.lower() or "database disk image" in error_str.lower():
+                            print("Attempting to commit playlists without USN autoincrement...", file=sys.stderr)
+                            try:
+                                self.db.commit(autoinc=False)
+                                print("✓ Playlist changes committed successfully without USN updates", file=sys.stderr)
+                            except Exception as retry_error:
+                                errors.append(f"Failed to commit playlist changes: {error_str}")
+                                print("⚠ Database corruption detected during playlist commit", file=sys.stderr)
+                                print("⚠ Playlists were not saved due to corruption", file=sys.stderr)
+                        else:
+                            errors.append(f"Failed to commit playlist changes: {error_str}")
+            
+            print(f"Export summary: {added_count} tracks added, {updated_count} tracks updated, {deleted_count} tracks deleted, {skipped_count} tracks skipped", file=sys.stderr)
+            print(f"Playlist summary: {playlist_added_count} playlists added, {playlist_updated_count} playlists updated, {playlist_skipped_count} playlists skipped", file=sys.stderr)
             if skipped_count > 0:
                 print(f"  Note: Skipped tracks are either unchanged or don't exist in database", file=sys.stderr)
             if deleted_count > 0:
@@ -895,6 +1542,9 @@ class RekordboxBridge:
                 "updated": updated_count,
                 "deleted": deleted_count,
                 "skipped": skipped_count,
+                "playlists_added": playlist_added_count,
+                "playlists_updated": playlist_updated_count,
+                "playlists_skipped": playlist_skipped_count,
                 "errors": errors if errors else None,
                 "db_path": actual_db_path
             }
@@ -982,15 +1632,45 @@ class RekordboxBridge:
                     else:
                         raise
                 except Exception as e:
-                    print(f"ERROR during commit: {e}", file=sys.stderr)
+                    error_str = str(e)
+                    print(f"ERROR during commit: {error_str}", file=sys.stderr)
                     import traceback
                     traceback.print_exc(file=sys.stderr)
-                    return {
-                        "success": False,
-                        "error": f"Failed to commit changes: {str(e)}",
-                        "updated_in_db": updated_in_db,
-                        "updated_in_bonk": updated_in_bonk
-                    }
+                    
+                    # Try to rollback on error
+                    try:
+                        self.db.rollback()
+                        print("✓ Rolled back transaction due to commit error", file=sys.stderr)
+                    except Exception as rollback_error:
+                        print(f"Error rolling back: {rollback_error}", file=sys.stderr)
+                    
+                    # Check if it's a corruption error - try committing without autoincrement
+                    if "malformed" in error_str.lower() or "corrupt" in error_str.lower() or "database disk image" in error_str.lower():
+                        print("Attempting to commit without USN autoincrement...", file=sys.stderr)
+                        try:
+                            self.db.commit(autoinc=False)
+                            print("✓ Committed successfully without USN updates", file=sys.stderr)
+                            return {
+                                "success": True,
+                                "updated_in_db": updated_in_db,
+                                "updated_in_bonk": updated_in_bonk,
+                                "warning": "Committed without USN updates due to database corruption"
+                            }
+                        except Exception as retry_error:
+                            return {
+                                "success": False,
+                                "error": f"Database corruption detected: {error_str}",
+                                "suggestion": "The database appears to be corrupted. Please restore from a backup.",
+                                "updated_in_db": updated_in_db,
+                                "updated_in_bonk": updated_in_bonk
+                            }
+                    else:
+                        return {
+                            "success": False,
+                            "error": f"Failed to commit changes: {error_str}",
+                            "updated_in_db": updated_in_db,
+                            "updated_in_bonk": updated_in_bonk
+                        }
             
             return {
                 "success": True,
@@ -1136,6 +1816,42 @@ class RekordboxBridge:
 
             # Create the smart playlist
             playlist = self.db.create_smart_playlist(name, smart, parent=parent_playlist)
+            
+            # Commit the changes so the playlist is immediately queryable
+            try:
+                self.db.commit()
+                print(f"✓ Smart playlist '{name}' created and committed (ID: {playlist.ID})", file=sys.stderr)
+            except Exception as commit_error:
+                # If commit fails, try without autoincrement
+                error_str = str(commit_error)
+                if "malformed" in error_str.lower() or "corrupt" in error_str.lower() or "database disk image" in error_str.lower():
+                    print(f"Warning: Commit failed due to corruption, retrying without USN updates...", file=sys.stderr)
+                    try:
+                        self.db.rollback()
+                        # Recreate the playlist since we rolled back
+                        playlist = self.db.create_smart_playlist(name, smart, parent=parent_playlist)
+                        self.db.commit(autoinc=False)
+                        print(f"✓ Smart playlist '{name}' created and committed without USN updates (ID: {playlist.ID})", file=sys.stderr)
+                    except Exception as retry_error:
+                        # Rollback again if retry fails
+                        try:
+                            self.db.rollback()
+                        except:
+                            pass
+                        return {
+                            "success": False,
+                            "error": f"Failed to commit smart playlist: {str(retry_error)}"
+                        }
+                else:
+                    # Rollback on other errors
+                    try:
+                        self.db.rollback()
+                    except:
+                        pass
+                    return {
+                        "success": False,
+                        "error": f"Failed to commit smart playlist: {error_str}"
+                    }
 
             return {
                 "success": True,
@@ -1481,20 +2197,44 @@ class RekordboxBridge:
             # Commit changes
             if updated_count > 0:
                 try:
+                    print(f"Committing {updated_count} smart fix updates...", file=sys.stderr)
                     self.db.commit()
-                    print(f"Committed {updated_count} smart fix updates", file=sys.stderr)
+                    print(f"✓ Committed {updated_count} smart fix updates", file=sys.stderr)
                 except Exception as e:
-                    print(f"Error committing changes: {e}", file=sys.stderr)
+                    error_str = str(e)
+                    print(f"Error committing changes: {error_str}", file=sys.stderr)
+                    
                     # Try to rollback on error
                     try:
                         self.db.rollback()
-                        print("Rolled back transaction due to commit error", file=sys.stderr)
+                        print("✓ Rolled back transaction due to commit error", file=sys.stderr)
                     except Exception as rollback_error:
                         print(f"Error rolling back: {rollback_error}", file=sys.stderr)
-                    return {
-                        "success": False,
-                        "error": f"Failed to commit changes: {str(e)}"
-                    }
+                    
+                    # Check if it's a corruption error - try committing without autoincrement
+                    if "malformed" in error_str.lower() or "corrupt" in error_str.lower() or "database disk image" in error_str.lower():
+                        print("Attempting to commit without USN autoincrement...", file=sys.stderr)
+                        try:
+                            self.db.commit(autoinc=False)
+                            print("✓ Committed successfully without USN updates", file=sys.stderr)
+                            return {
+                                "success": True,
+                                "updated": updated_count,
+                                "updates": updates,
+                                "errors": [],
+                                "warning": "Committed without USN updates due to database corruption"
+                            }
+                        except Exception as retry_error:
+                            return {
+                                "success": False,
+                                "error": f"Database corruption detected: {error_str}",
+                                "suggestion": "The database appears to be corrupted. Please restore from a backup."
+                            }
+                    else:
+                        return {
+                            "success": False,
+                            "error": f"Failed to commit changes: {error_str}"
+                        }
 
             return {
                 "success": True,
@@ -1730,6 +2470,40 @@ def main():
                     result = bridge.apply_smart_fixes(track_ids, fixes)
                 except Exception as e:
                     result = {"success": False, "error": f"Failed to read file or apply fixes: {str(e)}"}
+
+        elif command == "check-integrity":
+            db_path = sys.argv[2] if len(sys.argv) > 2 else None
+            # Open database if path provided
+            if db_path:
+                open_result = bridge.open_database(db_path)
+                if not open_result.get("success"):
+                    result = open_result
+                else:
+                    result = bridge.check_database_integrity()
+            else:
+                # Try auto-detection
+                open_result = bridge.open_database()
+                if not open_result.get("success"):
+                    result = open_result
+                else:
+                    result = bridge.check_database_integrity()
+
+        elif command == "repair-database":
+            db_path = sys.argv[2] if len(sys.argv) > 2 else None
+            # Open database if path provided
+            if db_path:
+                open_result = bridge.open_database(db_path)
+                if not open_result.get("success"):
+                    result = open_result
+                else:
+                    result = bridge.repair_database()
+            else:
+                # Try auto-detection
+                open_result = bridge.open_database()
+                if not open_result.get("success"):
+                    result = open_result
+                else:
+                    result = bridge.repair_database()
 
         else:
             result = {"success": False, "error": f"Unknown command: {command}"}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLibraryStore } from './store/useLibraryStore';
 import { useSettingsStore } from './store/useSettingsStore';
 import { RekordboxParser } from './utils/rekordboxParser';
@@ -9,9 +9,12 @@ import SearchBar from './components/SearchBar';
 import ExportModal from './components/ExportModal';
 import SettingsModal from './components/SettingsModal';
 import RekordboxDBModal from './components/RekordboxDBModal';
+import TagsManagementSuite from './components/TagsManagementSuite';
+import GenreManagementSuite from './components/GenreManagementSuite';
 import PlaylistSidebar from './components/PlaylistSidebar';
-import { Upload, FolderOpen } from 'lucide-react';
+import { Upload, FolderOpen, Tag, Music } from 'lucide-react';
 import { Track } from './types/track';
+import { Toaster } from 'sonner';
 import './styles/App.css';
 
 declare global {
@@ -51,8 +54,11 @@ function App() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showRekordboxDBModal, setShowRekordboxDBModal] = useState(false);
+  const [showTagsManagementSuite, setShowTagsManagementSuite] = useState(false);
+  const [showGenreManagementSuite, setShowGenreManagementSuite] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const dragEnterDepth = useRef(0);
   const { 
     library, 
     setLibrary, 
@@ -73,6 +79,32 @@ function App() {
   const { setLastSyncDate } = useSettingsStore();
 
   const parser = new RekordboxParser();
+
+  // Handle global drag end to reset drag state
+  useEffect(() => {
+    const handleGlobalDragEnd = () => {
+      dragEnterDepth.current = 0;
+      setIsDragOver(false);
+    };
+
+    // Listen to dragend on document to catch drags that end outside the app
+    document.addEventListener('dragend', handleGlobalDragEnd);
+    
+    // Also listen for when mouse leaves the window entirely
+    const handleMouseLeave = () => {
+      if (isDragOver) {
+        dragEnterDepth.current = 0;
+        setIsDragOver(false);
+      }
+    };
+
+    document.addEventListener('mouseleave', handleMouseLeave);
+
+    return () => {
+      document.removeEventListener('dragend', handleGlobalDragEnd);
+      document.removeEventListener('mouseleave', handleMouseLeave);
+    };
+  }, [isDragOver]);
 
   const handleRekordboxDBImport = (importedLibrary: any) => {
     // Merge with existing library or set new library
@@ -259,21 +291,36 @@ function App() {
   };
 
   // Drag and Drop handlers for files/folders
-  const handleDragOver = (e: React.DragEvent) => {
+  const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    dragEnterDepth.current++;
     if (!isDragOver) {
       setIsDragOver(true);
     }
   };
 
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Only set drag over to false if we're actually leaving the app container
-    if (e.currentTarget === e.target) {
+    dragEnterDepth.current--;
+    
+    // Only reset drag state when we've actually left the app container
+    // (dragEnterDepth will be 0 when leaving the root element)
+    if (dragEnterDepth.current === 0) {
       setIsDragOver(false);
     }
+  };
+
+  const handleDragEnd = () => {
+    // Always reset drag state when drag operation ends
+    dragEnterDepth.current = 0;
+    setIsDragOver(false);
   };
 
   const handleDrop = async (e: React.DragEvent) => {
@@ -418,8 +465,10 @@ function App() {
   return (
     <div
       className={`app ${isDragOver ? 'drag-over' : ''}`}
+      onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
+      onDragEnd={handleDragEnd}
       onDrop={handleDrop}
     >
       <Header
@@ -442,7 +491,7 @@ function App() {
       {!library && !loading && (
         <div className="welcome">
           <div className="welcome-content">
-            <h1>Welcome to Bonk</h1>
+            <h1>Welcome to Bonk!</h1>
             <p>Music Metadata Editor with Rekordbox 7 Support</p>
             <div className="welcome-buttons">
               <button className="import-btn-large" onClick={handleImport}>
@@ -452,6 +501,14 @@ function App() {
               <button className="import-btn-large import-btn-secondary" onClick={handleImportFolder}>
                 <FolderOpen size={24} />
                 <span>Import Folder</span>
+              </button>
+              <button className="import-btn-large import-btn-secondary" onClick={() => setShowTagsManagementSuite(true)}>
+                <Tag size={24} />
+                <span>Manage Tags</span>
+              </button>
+              <button className="import-btn-large import-btn-secondary" onClick={() => setShowGenreManagementSuite(true)}>
+                <Music size={24} />
+                <span>Manage Genres</span>
               </button>
             </div>
             <p className="welcome-hint">
@@ -529,6 +586,33 @@ function App() {
           currentLibrary={library}
         />
       )}
+
+      {showTagsManagementSuite && (
+        <TagsManagementSuite
+          isOpen={showTagsManagementSuite}
+          onClose={() => setShowTagsManagementSuite(false)}
+        />
+      )}
+
+      {showGenreManagementSuite && (
+        <GenreManagementSuite
+          isOpen={showGenreManagementSuite}
+          onClose={() => setShowGenreManagementSuite(false)}
+        />
+      )}
+
+      <Toaster
+        position="top-right"
+        richColors
+        closeButton
+        toastOptions={{
+          style: {
+            background: 'var(--bg-secondary)',
+            color: 'var(--text-primary)',
+            border: '1px solid var(--border)',
+          },
+        }}
+      />
     </div>
   );
 }

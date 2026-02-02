@@ -159,7 +159,32 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
         if (result.errors && result.errors.length > 0) {
           detailsMsg += `\n\nErrors: ${result.errors.slice(0, 3).join(', ')}${result.errors.length > 3 ? '...' : ''}`;
         }
+        if (result.corruption_hits && Array.isArray(result.corruption_hits) && result.corruption_hits.length > 0) {
+          const hits = result.corruption_hits as any[];
+          detailsMsg += `\n\n⚠ Could not delete ${hits.length} track${hits.length === 1 ? '' : 's'} due to database corruption.`;
+          const sample = hits.slice(0, 3).map((h) => h.trackTitle || h.folderPath || h.trackId).filter(Boolean);
+          if (sample.length > 0) {
+            detailsMsg += `\nExamples: ${sample.join(', ')}${hits.length > 3 ? '...' : ''}`;
+          }
+        }
         setDetailsMessage(detailsMsg);
+
+        // Refresh library from database to update playlist track counts + All Tracks count
+        if (window.electronAPI?.rekordboxImportDatabase && currentLibrary) {
+          try {
+            setDetailsMessage('Refreshing playlists from database...');
+            const importResult = await (window.electronAPI as any).rekordboxImportDatabase(customDbPath || null);
+            if (importResult?.success && importResult?.library) {
+              // Replace the whole library from DB so counts match what Rekordbox has now.
+              // (Keeping old tracks here can leave sidebar counts stale.)
+              onSync(importResult.library);
+              setDetailsMessage(detailsMsg + '\n✓ Playlists refreshed');
+            }
+          } catch (error) {
+            console.error('Failed to refresh playlists after export:', error);
+            // Don't show error to user, just log it - export was successful
+          }
+        }
 
         setTimeout(() => {
           setStatus('idle');
@@ -330,6 +355,15 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
                     </label>
                   </div>
                 </div>
+
+                {syncMode === 'overwrite' && (
+                  <div className="warning-section" style={{ marginTop: 12 }}>
+                    <AlertCircle size={16} />
+                    <div>
+                      <strong>Overwrite mode:</strong> tracks in Rekordbox that are not in Bonk will be deleted. Always backup first.
+                    </div>
+                  </div>
+                )}
 
                 <button 
                   className="btn-primary btn-large"

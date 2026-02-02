@@ -70,32 +70,37 @@ function PlaylistTreeItem({
   };
 
   const handleDragOver = (e: React.DragEvent) => {
-    if (isFolder) return; // Only playlists can receive tracks
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(true);
+    if (isFolder) return;
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragOver(true);
+    } catch (_) {}
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragOver(false);
+    } catch (_) {}
   };
 
   const handleDrop = (e: React.DragEvent) => {
     if (isFolder) return;
-    e.preventDefault();
-    e.stopPropagation();
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+    } catch (_) {}
     setIsDragOver(false);
-    
     try {
       const data = e.dataTransfer.getData('application/json');
       const { trackIds } = JSON.parse(data);
       if (trackIds && trackIds.length > 0) {
         onDrop(playlist, trackIds);
       }
-    } catch (error) {
-      console.error('Error handling drop:', error);
+    } catch (err) {
+      console.error('Error handling drop:', err);
     }
   };
 
@@ -217,13 +222,13 @@ export default function PlaylistSidebar({
     }
   };
 
-  const handleCreatePlaylist = (parent?: Playlist) => {
+  const handleCreatePlaylist = (_parent?: Playlist) => {
     setAddType('playlist');
     setNewName('');
     setShowAddModal(true);
   };
 
-  const handleCreateFolder = (parent?: Playlist) => {
+  const handleCreateFolder = (_parent?: Playlist) => {
     setAddType('folder');
     setNewName('');
     setShowAddModal(true);

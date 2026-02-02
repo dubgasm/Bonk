@@ -6,7 +6,7 @@ interface SettingsModalProps {
 }
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
-  const { tagWriteSettings, updateTagWriteSetting, fieldMappings, apiCredentials, updateApiCredential } = useSettingsStore();
+  const { tagWriteSettings, updateTagWriteSetting, fieldMappings, apiCredentials, updateApiCredential, taggingPreferences, updateKeyFormat } = useSettingsStore();
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -68,6 +68,107 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                     fontFamily: 'monospace'
                   }}
                 />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ fontWeight: 500, fontSize: '14px' }}>
+                  Discogs Personal Access Token
+                </label>
+                <input
+                  type="password"
+                  value={apiCredentials.discogsToken || ''}
+                  onChange={(e) => updateApiCredential('discogsToken', e.target.value)}
+                  placeholder="Your Discogs Token"
+                  style={{
+                    padding: '10px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)',
+                    fontSize: '14px',
+                    fontFamily: 'monospace'
+                  }}
+                />
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Get your token at discogs.com/settings/developers
+                </span>
+              </div>
+
+              {/* Beatport Credentials */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ fontWeight: 500, fontSize: '14px' }}>
+                  Beatport Username
+                </label>
+                <input
+                  type="text"
+                  value={apiCredentials.beatportUsername || ''}
+                  onChange={(e) => updateApiCredential('beatportUsername', e.target.value)}
+                  placeholder="Your Beatport username"
+                  style={{
+                    padding: '10px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)',
+                    fontSize: '14px',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ fontWeight: 500, fontSize: '14px' }}>
+                  Beatport Password
+                </label>
+                <input
+                  type="password"
+                  value={apiCredentials.beatportPassword || ''}
+                  onChange={(e) => updateApiCredential('beatportPassword', e.target.value)}
+                  placeholder="Your Beatport password"
+                  style={{
+                    padding: '10px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)',
+                    fontSize: '14px',
+                  }}
+                />
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Your Beatport account login (for DJ store access)
+                </span>
+              </div>
+
+            </div>
+          </div>
+
+          <div className="form-section">
+            <h3>Tagging Preferences</h3>
+            <div className="form-grid" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              
+              {/* Key Format */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ fontWeight: 500, fontSize: '14px' }}>
+                  Key Format
+                </label>
+                <select
+                  value={taggingPreferences?.keyFormat || 'camelot'}
+                  onChange={(e) => updateKeyFormat(e.target.value as 'standard' | 'camelot' | 'openkey')}
+                  style={{
+                    padding: '10px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    background: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)',
+                    fontSize: '14px',
+                  }}
+                >
+                  <option value="standard">Standard (Am, C, F#m)</option>
+                  <option value="camelot">Camelot Wheel (8A, 8B, 11A)</option>
+                  <option value="openkey">Open Key (1d, 1m, 4d)</option>
+                </select>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Camelot and Open Key are popular with DJs for harmonic mixing
+                </span>
               </div>
 
             </div>
@@ -159,6 +260,96 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                   onChange={(e) => updateTagWriteSetting('writeRating', e.target.checked)}
                 />
                 <span>Rating</span>
+              </label>
+
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={tagWriteSettings.writeComposer}
+                  onChange={(e) => updateTagWriteSetting('writeComposer', e.target.checked)}
+                />
+                <span>Composer</span>
+              </label>
+
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={tagWriteSettings.writeAlbumArtist}
+                  onChange={(e) => updateTagWriteSetting('writeAlbumArtist', e.target.checked)}
+                />
+                <span>Album Artist</span>
+              </label>
+
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={tagWriteSettings.writeRemixer}
+                  onChange={(e) => updateTagWriteSetting('writeRemixer', e.target.checked)}
+                />
+                <span>Remixer</span>
+              </label>
+
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={tagWriteSettings.writeLabel}
+                  onChange={(e) => updateTagWriteSetting('writeLabel', e.target.checked)}
+                />
+                <span>Label</span>
+              </label>
+
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={tagWriteSettings.writeReleaseDate}
+                  onChange={(e) => updateTagWriteSetting('writeReleaseDate', e.target.checked)}
+                />
+                <span>Release Date</span>
+              </label>
+
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={tagWriteSettings.writeTrackNumber}
+                  onChange={(e) => updateTagWriteSetting('writeTrackNumber', e.target.checked)}
+                />
+                <span>Track Number</span>
+              </label>
+
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={tagWriteSettings.writeDiscNumber}
+                  onChange={(e) => updateTagWriteSetting('writeDiscNumber', e.target.checked)}
+                />
+                <span>Disc Number</span>
+              </label>
+
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={tagWriteSettings.writeLyricist}
+                  onChange={(e) => updateTagWriteSetting('writeLyricist', e.target.checked)}
+                />
+                <span>Lyricist</span>
+              </label>
+
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={tagWriteSettings.writeOriginalArtist}
+                  onChange={(e) => updateTagWriteSetting('writeOriginalArtist', e.target.checked)}
+                />
+                <span>Original Artist</span>
+              </label>
+
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={tagWriteSettings.writeMixName}
+                  onChange={(e) => updateTagWriteSetting('writeMixName', e.target.checked)}
+                />
+                <span>Mix Name</span>
               </label>
             </div>
           </div>

@@ -52,6 +52,8 @@ interface LibraryState {
   selectedTrack: Track | null;
   selectedTracks: Set<string>;
   selectedPlaylist: Playlist | null;
+  auditionTrackId: string | null;
+  setAuditionTrackId: (id: string | null) => void;
   searchQuery: string;
   setLibrary: (library: RekordboxLibrary) => void;
   updateTrack: (trackId: string, updates: Partial<Track>) => void;
@@ -107,6 +109,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   selectedTrack: null,
   selectedTracks: new Set(),
   selectedPlaylist: null,
+  auditionTrackId: null,
   searchQuery: '',
   missingTracks: new Set(),
   showMissingOnly: false,
@@ -167,6 +170,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   setSelectedTrack: (track: Track | null) => {
     set({ selectedTrack: track });
+  },
+
+  setAuditionTrackId: (id: string | null) => {
+    set({ auditionTrackId: id });
   },
 
   toggleTrackSelection: (trackId: string) => {

@@ -11,7 +11,6 @@ import {
   DragEndEvent,
 } from '@dnd-kit/core';
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
@@ -65,15 +64,9 @@ function SortableGenre({
   return (
     <motion.div
       ref={setNodeRef}
-      style={style}
-      initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, x: -20 }}
-      layout
-      className={`tag-pill ${isDragging ? 'dragging' : ''}`}
       style={{
         ...style,
-        cursor: !isEditing ? 'default' : 'default',
+        cursor: 'default',
         display: 'flex',
         alignItems: 'center',
         gap: '8px',
@@ -84,6 +77,11 @@ function SortableGenre({
         marginBottom: '8px',
         boxShadow: isDragging ? '0 4px 12px rgba(0,0,0,0.3)' : 'none',
       }}
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, x: -20 }}
+      layout
+      className={`tag-pill ${isDragging ? 'dragging' : ''}`}
     >
       {isEditing ? (
         <div style={{ flex: 1, display: 'flex', gap: '4px' }}>
@@ -162,7 +160,7 @@ function SortableGenre({
 }
 
 export default function GenreManagementSuite({ isOpen, onClose }: GenreManagementSuiteProps) {
-  const { genres, addGenre, deleteGenre, renameGenre, getAllGenres } = useLibraryStore();
+  const { genres, addGenre, deleteGenre, renameGenre } = useLibraryStore();
 
   const [newGenre, setNewGenre] = useState('');
   const [editingGenre, setEditingGenre] = useState<string | null>(null);
@@ -226,7 +224,7 @@ export default function GenreManagementSuite({ isOpen, onClose }: GenreManagemen
     }
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = (_event: DragEndEvent) => {
     // Genres don't need ordering, but we can keep this for future if needed
     toast.info('Genre reordering not implemented');
   };

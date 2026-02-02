@@ -22,7 +22,13 @@ export interface Track {
   Mix?: string;
   Grouping?: string;
   Key?: string;
+  Composer?: string;
+  AlbumArtist?: string;
   AlbumArt?: string;  // Base64-encoded image data
+  TrackNumber?: string;  // Track number on album
+  DiscNumber?: string;   // Disc number for multi-disc albums
+  Lyricist?: string;     // Song lyricist
+  OriginalArtist?: string; // Original artist (for covers/remixes)
   
   // Enhanced metadata
   CatalogNumber?: string;  // e.g., "LM005"

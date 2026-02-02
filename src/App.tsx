@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLibraryStore } from './store/useLibraryStore';
 import { useSettingsStore } from './store/useSettingsStore';
+import { useAutoTagStore } from './store/useAutoTagStore';
 import { RekordboxParser } from './utils/rekordboxParser';
 import Header from './components/Header';
 import TrackTable from './components/TrackTable';
@@ -12,7 +13,9 @@ import RekordboxDBModal from './components/RekordboxDBModal';
 import TagsManagementSuite from './components/TagsManagementSuite';
 import GenreManagementSuite from './components/GenreManagementSuite';
 import PlaylistSidebar from './components/PlaylistSidebar';
-import { Upload, FolderOpen, Tag, Music } from 'lucide-react';
+import AutoTagWizard from './components/AutoTagWizard';
+import AudioFeaturesWizard from './components/AudioFeaturesWizard';
+import { FolderOpen, Tag, Music, Database, Archive, FileText, Sparkles, Activity } from 'lucide-react';
 import { Track } from './types/track';
 import { Toaster } from 'sonner';
 import './styles/App.css';
@@ -38,12 +41,34 @@ declare global {
       rekordboxExportDatabase?: (library: any, dbPath?: string, syncMode?: string) => Promise<{ success: boolean; added?: number; updated?: number; skipped?: number; errors?: string[]; error?: string }>;
       rekordboxSyncDatabase?: (library: any, dbPath?: string) => Promise<{ success: boolean; updated_in_db?: number; updated_in_bonk?: number; conflicts?: any[]; tracks?: any[]; error?: string }>;
       rekordboxSelectDatabase?: () => Promise<string | null>;
+      rekordboxCreateSmartPlaylist?: (name: string, conditions: any[], logicalOperator?: number, parent?: any) => Promise<{ success: boolean; error?: string }>;
+      rekordboxGetSmartPlaylistContents?: (playlistId: string) => Promise<any>;
       checkFileExists?: (filePath: string) => Promise<boolean>;
+      searchMissingTracksInFolder?: (folderPath: string, requests: { trackId: string; baseName: string; extension: string }[]) => Promise<Record<string, string>>;
       convertAudioFile?: (inputPath: string, outputPath: string, format: string) => Promise<{ success: boolean; outputPath?: string; inputSize?: number; outputSize?: number; error?: string; skipped?: boolean }>;
       batchConvertTracks?: (conversions: any[], options: any) => Promise<{ success: boolean; converted?: number; skipped?: number; failed?: number; results?: any[]; errors?: any[]; error?: string }>;
       updateRekordboxPath?: (trackId: string, newPath: string, oldPath: string, dbPath: string) => Promise<{ success: boolean; error?: string }>;
       onConversionProgress?: (callback: (data: any) => void) => void;
       removeConversionProgressListener?: () => void;
+      readAudioFile?: (filePath: string) => Promise<{ success: boolean; buffer?: string; mimeType?: string; error?: string }>;
+      // AutoTag handlers
+      autotagStart?: (config: any) => Promise<{ success: boolean; results?: any[]; cancelled?: boolean; error?: string }>;
+      autotagPause?: (runId: string) => Promise<{ success: boolean; error?: string }>;
+      autotagResume?: (runId: string) => Promise<{ success: boolean; error?: string }>;
+      autotagCancel?: (runId: string) => Promise<{ success: boolean; error?: string }>;
+      autotagCheckAuth?: (providerId: string) => Promise<{ authenticated: boolean; requiresAuth: boolean }>;
+      onAutotagEvent?: (callback: (data: any) => void) => void;
+      onAutotagResult?: (callback: (data: any) => void) => void;
+      removeAutotagListeners?: () => void;
+      // Audio Features handlers
+      audioFeaturesStart?: (config: any) => Promise<{ success: boolean; results?: any[]; cancelled?: boolean; error?: string }>;
+      audioFeaturesPause?: (runId: string) => Promise<{ success: boolean; error?: string }>;
+      audioFeaturesResume?: (runId: string) => Promise<{ success: boolean; error?: string }>;
+      audioFeaturesCancel?: (runId: string) => Promise<{ success: boolean; error?: string }>;
+      audioFeaturesDetectKey?: (filePath: string) => Promise<{ success: boolean; key?: string; error?: string }>;
+      onAudioFeaturesEvent?: (callback: (data: any) => void) => void;
+      onAudioFeaturesResult?: (callback: (data: any) => void) => void;
+      removeAudioFeaturesListeners?: () => void;
     };
   }
 }
@@ -56,6 +81,7 @@ function App() {
   const [showRekordboxDBModal, setShowRekordboxDBModal] = useState(false);
   const [showTagsManagementSuite, setShowTagsManagementSuite] = useState(false);
   const [showGenreManagementSuite, setShowGenreManagementSuite] = useState(false);
+  const [showAudioFeaturesWizard, setShowAudioFeaturesWizard] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragEnterDepth = useRef(0);
@@ -77,6 +103,7 @@ function App() {
     deleteTracks
   } = useLibraryStore();
   const { setLastSyncDate } = useSettingsStore();
+  const { isOpen: showAutoTagWizard, openModal: openAutoTagWizard } = useAutoTagStore();
 
   const parser = new RekordboxParser();
 
@@ -292,40 +319,42 @@ function App() {
 
   // Drag and Drop handlers for files/folders
   const handleDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragEnterDepth.current++;
-    if (!isDragOver) {
-      setIsDragOver(true);
-    }
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+      dragEnterDepth.current++;
+      if (!isDragOver) setIsDragOver(true);
+    } catch (_) {}
   };
 
   const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+    } catch (_) {}
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragEnterDepth.current--;
-    
-    // Only reset drag state when we've actually left the app container
-    // (dragEnterDepth will be 0 when leaving the root element)
-    if (dragEnterDepth.current === 0) {
-      setIsDragOver(false);
-    }
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+      dragEnterDepth.current = Math.max(0, dragEnterDepth.current - 1);
+      if (dragEnterDepth.current === 0) setIsDragOver(false);
+    } catch (_) {}
   };
 
-  const handleDragEnd = () => {
-    // Always reset drag state when drag operation ends
-    dragEnterDepth.current = 0;
-    setIsDragOver(false);
+  const handleDragEnd = (_e: React.DragEvent) => {
+    try {
+      dragEnterDepth.current = 0;
+      setIsDragOver(false);
+    } catch (_) {}
   };
 
   const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+    } catch (_) {}
     setIsDragOver(false);
 
     if (!window.electronAPI) {
@@ -491,28 +520,66 @@ function App() {
       {!library && !loading && (
         <div className="welcome">
           <div className="welcome-content">
-            <h1>Welcome to Bonk!</h1>
-            <p>Music Metadata Editor with Rekordbox 7 Support</p>
-            <div className="welcome-buttons">
-              <button className="import-btn-large" onClick={handleImport}>
-                <Upload size={24} />
-                <span>Import Rekordbox XML</span>
-              </button>
-              <button className="import-btn-large import-btn-secondary" onClick={handleImportFolder}>
-                <FolderOpen size={24} />
-                <span>Import Folder</span>
-              </button>
-              <button className="import-btn-large import-btn-secondary" onClick={() => setShowTagsManagementSuite(true)}>
-                <Tag size={24} />
-                <span>Manage Tags</span>
-              </button>
-              <button className="import-btn-large import-btn-secondary" onClick={() => setShowGenreManagementSuite(true)}>
-                <Music size={24} />
-                <span>Manage Genres</span>
-              </button>
+            <div className="welcome-hero">
+              <h1>Bonk!</h1>
+              <p className="welcome-tagline">Music metadata editor for Rekordbox</p>
             </div>
+
+            <div className="welcome-actions">
+              <div className="welcome-card welcome-card-primary">
+                <h2>Rekordbox Database</h2>
+                <p>Import directly from your Rekordbox master.db or create a backup first.</p>
+                <div className="welcome-card-buttons">
+                  <button className="import-btn-large" onClick={() => setShowRekordboxDBModal(true)}>
+                    <Database size={22} />
+                    <span>Import from Database</span>
+                  </button>
+                  <button className="import-btn-large import-btn-secondary" onClick={() => setShowRekordboxDBModal(true)}>
+                    <Archive size={22} />
+                    <span>Backup Database</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="welcome-card">
+                <h2>Other import options</h2>
+                <div className="welcome-card-buttons welcome-card-buttons-row">
+                  <button className="welcome-btn-secondary" onClick={handleImport}>
+                    <FileText size={20} />
+                    <span>Import XML</span>
+                  </button>
+                  <button className="welcome-btn-secondary" onClick={handleImportFolder}>
+                    <FolderOpen size={20} />
+                    <span>Import Folder</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="welcome-utilities">
+                <button className="welcome-link" onClick={() => openAutoTagWizard()}>
+                  <Sparkles size={16} />
+                  Auto Tag
+                </button>
+                <span className="welcome-util-sep">·</span>
+                <button className="welcome-link" onClick={() => setShowAudioFeaturesWizard(true)}>
+                  <Activity size={16} />
+                  Audio Features
+                </button>
+                <span className="welcome-util-sep">·</span>
+                <button className="welcome-link" onClick={() => setShowTagsManagementSuite(true)}>
+                  <Tag size={16} />
+                  Manage Tags
+                </button>
+                <span className="welcome-util-sep">·</span>
+                <button className="welcome-link" onClick={() => setShowGenreManagementSuite(true)}>
+                  <Music size={16} />
+                  Manage Genres
+                </button>
+              </div>
+            </div>
+
             <p className="welcome-hint">
-              Import XML from Rekordbox or scan a folder to create playlists from folder structure
+              Drag & drop XML or folders anywhere to import
             </p>
           </div>
         </div>
@@ -600,6 +667,14 @@ function App() {
           onClose={() => setShowGenreManagementSuite(false)}
         />
       )}
+
+      {showAutoTagWizard && <AutoTagWizard />}
+      
+      <AudioFeaturesWizard
+        isOpen={showAudioFeaturesWizard}
+        onClose={() => setShowAudioFeaturesWizard(false)}
+        selectedFiles={library?.Tracks?.map((t: Track) => t.Location?.replace('file://localhost', '')) || []}
+      />
 
       <Toaster
         position="top-right"

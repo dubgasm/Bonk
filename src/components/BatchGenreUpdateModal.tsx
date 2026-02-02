@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react';
-import { X, Music } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, Music, FileEdit } from 'lucide-react';
 import { useLibraryStore } from '../store/useLibraryStore';
+import { useSettingsStore } from '../store/useSettingsStore';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 
@@ -18,13 +19,26 @@ export default function BatchGenreUpdateModal({
   trackCount,
 }: BatchGenreUpdateModalProps) {
   const { genres, batchUpdateGenres, addGenre } = useLibraryStore();
+  const { tagWriteSettings } = useSettingsStore();
+  const getLibrary = useLibraryStore.getState;
   const [selectedGenre, setSelectedGenre] = useState('');
   const [newGenre, setNewGenre] = useState('');
   const [mode, setMode] = useState<'set' | 'clear'>('set');
+  const [writeTagsAfter, setWriteTagsAfter] = useState(false);
+
+  // Reset state when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setSelectedGenre('');
+      setNewGenre('');
+      setMode('set');
+      setWriteTagsAfter(false);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const handleApply = () => {
+  const handleApply = async () => {
     if (trackIds.length === 0) {
       toast.error('No tracks selected');
       return;
@@ -43,17 +57,59 @@ export default function BatchGenreUpdateModal({
         addGenre(newGenre.trim());
       }
 
-      batchUpdateGenres(trackIds, genreToApply, 'set');
+      batchUpdateGenres(trackIds, genreToApply.trim(), 'set');
       toast.success(`Genre "${genreToApply}" applied to ${trackCount} track${trackCount !== 1 ? 's' : ''}`);
     } else {
       batchUpdateGenres(trackIds, '', 'clear');
       toast.success(`Genre cleared from ${trackCount} track${trackCount !== 1 ? 's' : ''}`);
     }
 
+    // Get updated tracks for syncing - get fresh state from store after update
+    const currentLibrary = getLibrary().library;
+    const updatedTracks = currentLibrary?.tracks.filter(track => trackIds.includes(track.TrackID)) || [];
+
+    // Write tags to files if requested
+    if (writeTagsAfter && updatedTracks.length > 0) {
+      if (!window.electronAPI?.writeTags) {
+        toast.error('Write Tags feature not available');
+      } else {
+        try {
+          // Filter out tracks without Location (can't write tags without file path)
+          const tracksWithLocation = updatedTracks.filter(track => track.Location);
+          const tracksWithoutLocation = updatedTracks.length - tracksWithLocation.length;
+          
+          if (tracksWithLocation.length === 0) {
+            toast.error(`Cannot write tags: None of the selected tracks have file locations. ${tracksWithoutLocation > 0 ? `${tracksWithoutLocation} track(s) missing file paths.` : ''}`);
+            return;
+          }
+          
+          if (tracksWithoutLocation > 0) {
+            toast.warning(`${tracksWithoutLocation} track(s) skipped (no file location). Writing tags to ${tracksWithLocation.length} track(s)...`);
+          } else {
+            toast.info(`Writing tags to ${tracksWithLocation.length} file(s)...`);
+          }
+          
+          const result = await window.electronAPI.writeTags(tracksWithLocation, tagWriteSettings);
+          if (result.success) {
+            toast.success(`Tags written to ${result.count} file(s)`);
+            if (result.errors && result.errors.length > 0) {
+              console.error('Tag write errors:', result.errors);
+              toast.warning(`${result.errors.length} file(s) had errors. Check console for details.`);
+            }
+          } else {
+            toast.error(`Failed to write tags: ${result.error}`);
+          }
+        } catch (error: any) {
+          toast.error(`Error writing tags: ${error.message}`);
+        }
+      }
+    }
+
     onClose();
     setSelectedGenre('');
     setNewGenre('');
     setMode('set');
+    setWriteTagsAfter(false);
   };
 
   return (
@@ -191,6 +247,50 @@ export default function BatchGenreUpdateModal({
               This will remove the genre from all selected tracks.
             </div>
           )}
+
+          <div className="form-group" style={{ marginTop: '24px', marginBottom: '20px' }}>
+            <label style={{ marginBottom: '12px', display: 'block', fontWeight: 500 }}>Write Tags to Files (Optional)</label>
+            <motion.label
+              whileHover={{ scale: 1.02 }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                cursor: 'pointer',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                background: writeTagsAfter ? 'var(--bg-hover)' : 'transparent',
+                border: `1px solid ${writeTagsAfter ? 'var(--accent)' : 'var(--border)'}`,
+                transition: 'all 0.2s',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={writeTagsAfter}
+                onChange={(e) => setWriteTagsAfter(e.target.checked)}
+                style={{ cursor: 'pointer' }}
+              />
+              <FileEdit size={18} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 500 }}>Write Tags to Files</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  Updates genre in audio file metadata (ID3 tags)
+                </div>
+              </div>
+            </motion.label>
+            {!writeTagsAfter && (
+              <div style={{ 
+                marginTop: '10px', 
+                padding: '8px 12px', 
+                background: 'var(--bg-tertiary)', 
+                borderRadius: '6px', 
+                color: 'var(--text-secondary)', 
+                fontSize: '11px' 
+              }}>
+                💡 Tip: Enable this option to automatically update genre tags in audio files after applying changes
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="modal-footer">

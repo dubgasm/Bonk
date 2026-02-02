@@ -32,7 +32,7 @@ export default function SearchBar() {
         <Search size={20} className="search-icon" />
         <input
           type="text"
-          placeholder="Search tracks by name, artist, album, genre, or key..."
+          placeholder="Search tracks..."
           value={localQuery}
           onChange={handleChange}
           className="search-input"

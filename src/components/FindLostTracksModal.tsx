@@ -36,60 +36,55 @@ export default function FindLostTracksModal({ onClose }: FindLostTracksModalProp
       return;
     }
 
+    const api = (window.electronAPI as any)?.searchMissingTracksInFolder;
+    if (!api) {
+      alert('Search not available');
+      return;
+    }
+
     setIsSearching(true);
     setMatches([]);
 
     try {
-      const foundMatches: typeof matches = [];
+      const ext = newExtension.startsWith('.') ? newExtension : `.${newExtension}`;
+      const requests: { trackId: string; baseName: string; extension: string }[] = [];
 
       for (const track of missingTracksList) {
-        if (!track.Location) continue;
-
-        // Parse old path
-        let oldPath = track.Location;
-        if (oldPath.startsWith('file://localhost')) {
-          oldPath = oldPath.replace('file://localhost', '');
-        } else if (oldPath.startsWith('file://')) {
-          oldPath = oldPath.replace('file://', '');
+        let baseName = '';
+        let oldPath = '';
+        if (track.Location) {
+          oldPath = track.Location
+            .replace(/^file:\/\/localhost/i, '')
+            .replace(/^file:\/\//i, '');
+          oldPath = decodeURIComponent(oldPath);
+          const pathParts = oldPath.replace(/\\/g, '/').split('/');
+          const filename = pathParts.pop() || '';
+          baseName = filename.replace(/\.[^.]+$/, '') || filename;
         }
-        oldPath = decodeURIComponent(oldPath);
-
-        // Get directory and base filename
-        const pathParts = oldPath.split('/');
-        const filename = pathParts.pop() || '';
-        const directory = pathParts.join('/');
-
-        // Check if track is in the target folder
-        if (!directory.includes(targetFolder) && !targetFolder.includes(directory)) {
-          continue;
-        }
-
-        // Generate new path with new extension
-        const baseName = filename.replace(/\.[^.]+$/, ''); // Remove old extension
-        const newPath = `${directory}/${baseName}${newExtension.startsWith('.') ? newExtension : '.' + newExtension}`;
-
-        // Check if new file exists
-        if (window.electronAPI?.checkFileExists) {
-          const exists = await window.electronAPI.checkFileExists(newPath);
-          if (exists) {
-            foundMatches.push({
-              trackId: track.TrackID,
-              trackName: track.Name || filename,
-              oldPath: oldPath,
-              newPath: newPath,
-              found: true
-            });
-          } else {
-            foundMatches.push({
-              trackId: track.TrackID,
-              trackName: track.Name || filename,
-              oldPath: oldPath,
-              newPath: newPath,
-              found: false
-            });
-          }
-        }
+        if (!baseName) baseName = track.Name || 'unknown';
+        requests.push({ trackId: track.TrackID, baseName, extension: ext });
       }
+
+      const foundPaths = await api(targetFolder, requests);
+
+      const foundMatches = missingTracksList.map((track) => {
+        let oldPath = track.Location || '';
+        if (oldPath.startsWith('file://localhost')) oldPath = oldPath.replace('file://localhost', '');
+        else if (oldPath.startsWith('file://')) oldPath = oldPath.replace('file://', '');
+        oldPath = decodeURIComponent(oldPath);
+        const pathParts = oldPath.replace(/\\/g, '/').split('/');
+        const filename = pathParts.pop() || '';
+        const baseName = filename.replace(/\.[^.]+$/, '') || track.Name || 'unknown';
+        const newPath = foundPaths[track.TrackID] || '';
+
+        return {
+          trackId: track.TrackID,
+          trackName: track.Name || filename,
+          oldPath,
+          newPath: newPath || `${baseName}${ext}`,
+          found: !!foundPaths[track.TrackID]
+        };
+      });
 
       setMatches(foundMatches);
     } catch (error: any) {
@@ -116,16 +111,10 @@ export default function FindLostTracksModal({ onClose }: FindLostTracksModalProp
 
     // Update tracks
     for (const match of foundMatches) {
-      // Generate new location with file:// prefix
-      let newLocation = match.newPath;
-      const track = library?.tracks.find(t => t.TrackID === match.trackId);
-      if (track?.Location) {
-        if (track.Location.startsWith('file://localhost')) {
-          newLocation = `file://localhost${match.newPath}`;
-        } else if (track.Location.startsWith('file://')) {
-          newLocation = `file://${match.newPath}`;
-        }
-      }
+      const pathForUrl = match.newPath.replace(/\\/g, '/');
+      const newLocation = pathForUrl.startsWith('/')
+        ? `file://${pathForUrl}`  // Unix: file:///Volumes/...
+        : `file:///${pathForUrl}`; // Windows: file:///C:/...
 
       // Update track location
       updateTrack(match.trackId, {
@@ -175,8 +164,8 @@ export default function FindLostTracksModal({ onClose }: FindLostTracksModalProp
             <div>
               <strong>How it works:</strong>
               <p style={{ marginTop: '8px', fontSize: '13px' }}>
-                This tool finds missing tracks by looking for files with the same name but different extension in the target folder.
-                Perfect for when you've converted files (e.g., FLAC → MP3) and need to relink them.
+                Select the folder where your missing tracks now live (e.g. OneDrive, external drive). The tool searches recursively
+                for files matching each track&apos;s filename with the chosen extension. Works even if files moved to a different drive.
               </p>
             </div>
           </div>

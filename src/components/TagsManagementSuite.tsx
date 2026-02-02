@@ -1,7 +1,6 @@
 import { useState, useMemo } from 'react';
 import { X, Plus, Trash2, Edit2, Save, Tag as TagIcon, GripVertical, Search } from 'lucide-react';
 import { useLibraryStore } from '../store/useLibraryStore';
-import { CustomTag } from '../types/track';
 import {
   DndContext,
   closestCenter,
@@ -12,7 +11,6 @@ import {
   DragEndEvent,
 } from '@dnd-kit/core';
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
@@ -79,13 +77,6 @@ function SortableCategory({
   return (
     <motion.div
       ref={setNodeRef}
-      style={style}
-      initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, x: -20 }}
-      layout
-      className={`tag-pill ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
-      onClick={!isEditing ? onSelect : undefined}
       style={{
         ...style,
         cursor: !isEditing ? 'pointer' : 'default',
@@ -99,6 +90,12 @@ function SortableCategory({
         marginBottom: '8px',
         boxShadow: isDragging ? '0 4px 12px rgba(0,0,0,0.3)' : 'none',
       }}
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, x: -20 }}
+      layout
+      className={`tag-pill ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+      onClick={!isEditing ? onSelect : undefined}
     >
       <div
         {...attributes}

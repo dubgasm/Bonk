@@ -23,7 +23,7 @@ export default function BatchTagUpdateModal({
   const { tagCategories, batchUpdateTags, getAllTags } = useLibraryStore();
   const [mode, setMode] = useState<UpdateMode>('add');
   const [selectedTags, setSelectedTags] = useState<CustomTag[]>([]);
-  const [newCategory, setNewCategory] = useState('');
+  const [_newCategory, _setNewCategory] = useState('');
   const [newTagName, setNewTagName] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>(tagCategories[0] || 'Uncategorized');
   const [searchQuery, setSearchQuery] = useState('');
@@ -117,7 +117,15 @@ export default function BatchTagUpdateModal({
       }
     }
 
-    batchUpdateTags(trackIds, selectedTags, selectedTags, mode);
+    // Normalize tags (trim + default category)
+    const normalizedTags = selectedTags
+      .map((t) => ({
+        category: (t.category || 'Uncategorized').trim() || 'Uncategorized',
+        name: (t.name || '').trim(),
+      }))
+      .filter((t) => t.name.length > 0);
+
+    batchUpdateTags(trackIds, normalizedTags, normalizedTags, mode);
     
     const modeText = mode === 'add' ? 'added to' : mode === 'replace' ? 'replaced on' : 'removed from';
     toast.success(`Tags ${modeText} ${trackCount} track${trackCount !== 1 ? 's' : ''}`);

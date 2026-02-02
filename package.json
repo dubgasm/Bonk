@@ -1,9 +1,10 @@
 {
   "name": "bonk-metadata-editor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Music metadata editing app with Rekordbox 7 import/export",
   "main": "electron.js",
   "scripts": {
+    "predev": "lsof -ti:5173 | xargs kill -9 2>/dev/null || true",
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
     "dev:renderer": "vite --port 5173 --strictPort",
     "dev:electron": "wait-on http://localhost:5173 && NODE_ENV=development electron .",
@@ -26,7 +27,6 @@
     "@types/node": "^20.10.0",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
-    "@types/react-window": "^1.8.8",
     "@vitejs/plugin-react": "^4.2.1",
     "concurrently": "^8.2.2",
     "electron": "^28.0.0",
@@ -40,7 +40,6 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@tonaljs/tonal": "^4.10.0",
-    "axios": "^1.6.2",
     "dotenv": "^17.2.3",
     "essentia.js": "^0.1.3",
     "fast-xml-parser": "^4.3.2",
@@ -48,11 +47,12 @@
     "framer-motion": "^12.23.26",
     "lucide-react": "^0.294.0",
     "music-metadata": "^8.1.4",
+    "node-taglib-sharp": "^6.0.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-window": "^1.8.10",
     "sharp": "^0.33.1",
     "sonner": "^2.0.7",
+    "wavesurfer.js": "^7.12.1",
     "zustand": "^4.4.7"
   },
   "build": {

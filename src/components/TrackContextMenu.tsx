@@ -15,6 +15,7 @@ interface TrackContextMenuProps {
   selectedCount: number;
   selectedPlaylist?: any;
   onRemoveFromPlaylist?: () => void;
+  onDeleteTracks?: () => void;
 }
 
 export default function TrackContextMenu({
@@ -31,6 +32,7 @@ export default function TrackContextMenu({
   selectedCount,
   selectedPlaylist,
   onRemoveFromPlaylist,
+  onDeleteTracks,
 }: TrackContextMenuProps) {
   // If a track is provided (right-click), it's a single-track operation
   // Otherwise, it's a batch operation on selected tracks
@@ -66,6 +68,12 @@ export default function TrackContextMenu({
       className="context-menu"
       style={{ left: x, top: y }}
     >
+      <div className="context-menu-header">
+        <span className="context-menu-title">{isSingleTrack ? 'Track actions' : 'Selection actions'}</span>
+        <span className="context-menu-subtitle">{operationCount} {operationCount === 1 ? 'track' : 'tracks'}</span>
+      </div>
+      <div className="context-menu-separator" />
+
       <button
         className="context-menu-item"
         onClick={() => {
@@ -130,6 +138,25 @@ export default function TrackContextMenu({
             <Trash2 size={16} />
             <span>Remove from Playlist</span>
             {operationCount > 0 && <span className="badge">{operationCount}</span>}
+          </button>
+        </>
+      )}
+
+      {onDeleteTracks && (
+        <>
+          <div className="context-menu-separator" />
+
+          <button
+            className="context-menu-item danger"
+            onClick={() => {
+              onDeleteTracks();
+              onClose();
+            }}
+            disabled={!isSingleTrack && selectedCount === 0}
+          >
+            <Trash2 size={16} />
+            <span>{isSingleTrack ? 'Delete Track' : 'Delete Selected Tracks'}</span>
+            {operationCount > 0 && <span className="badge danger-badge">{operationCount}</span>}
           </button>
         </>
       )}

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { AppSettings, defaultSettings, SyncMode, ApiCredentials } from '../types/settings';
+import { AppSettings, defaultSettings, SyncMode, ApiCredentials, KeyFormat } from '../types/settings';
 
 interface SettingsState extends AppSettings {
   updateSyncMode: (mode: SyncMode) => void;
@@ -7,6 +7,7 @@ interface SettingsState extends AppSettings {
   toggleConvertColors: () => void;
   updateTagWriteSetting: (field: keyof AppSettings['tagWriteSettings'], value: boolean) => void;
   updateApiCredential: (field: keyof ApiCredentials, value: string) => void;
+  updateKeyFormat: (format: KeyFormat) => void;
   setLastSyncDate: (date: string) => void;
   setSkipPlaylistRemovalConfirm: (skip: boolean) => void;
   resetSettings: () => void;
@@ -49,6 +50,14 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       apiCredentials: {
         ...state.apiCredentials,
         [field]: value,
+      },
+    })),
+
+  updateKeyFormat: (format) =>
+    set((state) => ({
+      taggingPreferences: {
+        ...state.taggingPreferences,
+        keyFormat: format,
       },
     })),
 

@@ -33,6 +33,48 @@ class RekordboxBridge:
     def __init__(self):
         self.db = None
         self.config = None
+
+    # -----------------------------
+    # Helpers: DB safety / framing
+    # -----------------------------
+    @staticmethod
+    def _is_corruption_error(err: Exception) -> bool:
+        msg = str(err).lower()
+        return (
+            "database disk image is malformed" in msg
+            or "disk image is malformed" in msg
+            or "malformed" in msg
+            or "sqlcipher3.dbapi2.databaseerror" in msg and "malformed" in msg
+        )
+
+    def _safe_rollback(self) -> None:
+        try:
+            if self.db:
+                self.db.rollback()
+        except Exception:
+            pass
+
+    def _safe_commit(self, *, autoinc: bool = True) -> Optional[str]:
+        """Commit and return error string if failed."""
+        try:
+            if not self.db:
+                return "Database not open"
+            self.db.commit(autoinc=autoinc)
+            return None
+        except Exception as e:
+            self._safe_rollback()
+            return str(e)
+
+    def _stage_delete_track(self, content) -> None:
+        """Stage deletion of a track and its playlist links (no commit)."""
+        # Delete join rows first
+        playlist_entries = self.db.query(DjmdSongPlaylist).filter(
+            DjmdSongPlaylist.ContentID == content.ID
+        ).all()
+        for entry in playlist_entries:
+            # Use pyrekordbox delete wrapper so registry is tracked
+            self.db.delete(entry)
+        self.db.delete(content)
         
     def get_config(self) -> Dict[str, Any]:
         """Get current pyrekordbox configuration"""
@@ -506,6 +548,34 @@ class RekordboxBridge:
                     # Fallback: unknown format, treat as Custom with full string
                     tags.append({"category": "Custom", "name": mt.strip(), "source": "rekordbox"})
 
+                # Safely get composer name
+                try:
+                    composer_name = content.ComposerName if content.Composer else ""
+                except:
+                    composer_name = ""
+                
+                # Safely get album artist name
+                try:
+                    album_artist_name = content.AlbumArtistName if content.Album else ""
+                except:
+                    album_artist_name = ""
+                
+                # Safely get lyricist name (Lyricist is a ForeignKey to DjmdArtist)
+                try:
+                    if content.Lyricist:
+                        lyricist_artist = self.db.get_artist(ID=content.Lyricist)
+                        lyricist_name = lyricist_artist.Name if lyricist_artist else ""
+                    else:
+                        lyricist_name = ""
+                except:
+                    lyricist_name = ""
+                
+                # Safely get original artist name
+                try:
+                    original_artist_name = content.OrgArtistName if content.OrgArtist else ""
+                except:
+                    original_artist_name = ""
+
                 track = {
                     "TrackID": str(content.ID),
                     "Name": content.Title or "",
@@ -524,9 +594,16 @@ class RekordboxBridge:
                     "Key": key_name,
                     "Label": content.LabelName or "",
                     "Remixer": remixer_name,
+                    "Composer": composer_name,
+                    "AlbumArtist": album_artist_name,
+                    "TrackNumber": str(content.TrackNo) if content.TrackNo is not None else "",
+                    "DiscNumber": str(content.DiscNo) if content.DiscNo is not None else "",
+                    "Lyricist": lyricist_name,
+                    "OriginalArtist": original_artist_name,
+                    "MixName": content.Subtitle or "",  # Subtitle field stores Mix Name
+                    "Mix": content.Subtitle or "",  # Keep Mix for backward compatibility
                     "DateAdded": content.created_at.isoformat() if content.created_at else "",
                     "PlayCount": str(content.DJPlayCount) if content.DJPlayCount else "",
-                    "Mix": content.Subtitle or "",  # Using Subtitle field for Mix
                     "Color": str(content.ColorID) if content.ColorID else "",
                     "tags": tags,
                 }
@@ -748,6 +825,33 @@ class RekordboxBridge:
                         except:
                             pass
             
+            # Ensure generated IDs are strings to avoid "Could not sort objects by primary key;
+            # '<' not supported between str and int" (Rekordbox 7 has mixed int/str PKs)
+            _orig_gen = self.db.generate_unused_id
+            def _gen_str(*a, **kw):
+                return str(_orig_gen(*a, **kw))
+            self.db.generate_unused_id = _gen_str
+
+            # PRE-FLIGHT CHECK: Verify database integrity before making any changes
+            print("Step 2: Checking database integrity...", file=sys.stderr)
+            try:
+                # Test database accessibility by querying a critical table
+                # This will fail immediately if database is corrupted
+                test_query = self.db.get_content().limit(1).all()
+                # Also test the problematic playlist table
+                from pyrekordbox.db6.tables import DjmdSongPlaylist
+                test_playlist = self.db.query(DjmdSongPlaylist).limit(1).all()
+                print("  ✓ Database integrity check passed", file=sys.stderr)
+            except Exception as integrity_error:
+                error_msg = str(integrity_error)
+                if "malformed" in error_msg.lower() or "corrupt" in error_msg.lower() or "disk image" in error_msg.lower():
+                    return {
+                        "success": False,
+                        "error": f"❌ DATABASE IS CORRUPTED: {error_msg}\n\nThe database cannot be safely modified. You must restore from a clean backup first.\n\nRun: cp /Users/suhaas/Documents/rekordbox_bak_YYYYMMDD/master.db ~/Library/Pioneer/rekordbox/master.db"
+                    }
+                # If it's not a corruption error, just warn and continue
+                print(f"  ⚠ Could not check database integrity: {error_msg}", file=sys.stderr)
+            
             added_count = 0
             updated_count = 0
             skipped_count = 0
@@ -844,6 +948,23 @@ class RekordboxBridge:
                     return key
                 except Exception as e:
                     print(f"Error getting key '{key_name}': {e}", file=sys.stderr)
+                    return None
+            
+            # Helper function to get or create label
+            def get_or_create_label(name: str):
+                if not name:
+                    return None
+                try:
+                    label = self.db.get_label(Name=name).one_or_none()
+                    if not label:
+                        # Create new label
+                        label = self.db.add_label(name=name)
+                    return label
+                except ValueError:
+                    # Label already exists, get it
+                    return self.db.get_label(Name=name).one()
+                except Exception as e:
+                    print(f"Error getting/creating label '{name}': {e}", file=sys.stderr)
                     return None
             
             # Process tracks
@@ -978,6 +1099,139 @@ class RekordboxBridge:
                             key = get_or_create_key(key_name)
                             if key and existing.KeyID != key.ID:
                                 existing.KeyID = key.ID
+                                track_updated = True
+
+                        # Update Label
+                        if track.get("Label") is not None:
+                            new_label = str(track["Label"]) if track["Label"] else None
+                            existing_label = existing.LabelName if existing.Label else None
+                            if new_label != existing_label:
+                                try:
+                                    if new_label:
+                                        label = get_or_create_label(new_label)
+                                        if label:
+                                            existing.LabelID = label.ID
+                                    else:
+                                        existing.LabelID = None
+                                    track_updated = True
+                                except Exception as e:
+                                    print(f"Error updating label for track {content.ID}: {e}", file=sys.stderr)
+
+                        # Update Remixer
+                        if track.get("Remixer") is not None:
+                            remixer_name = str(track["Remixer"]) if track["Remixer"] else None
+                            existing_remixer = existing.RemixerName if existing.Remixer else None
+                            if remixer_name != existing_remixer:
+                                try:
+                                    if remixer_name:
+                                        remixer = get_or_create_artist(remixer_name)
+                                        if remixer:
+                                            existing.RemixerID = remixer.ID
+                                    else:
+                                        existing.RemixerID = None
+                                    track_updated = True
+                                except Exception as e:
+                                    print(f"Error updating remixer for track {content.ID}: {e}", file=sys.stderr)
+
+                        # Update Composer
+                        if track.get("Composer") is not None:
+                            composer_name = str(track["Composer"]) if track["Composer"] else None
+                            existing_composer = existing.ComposerName if existing.Composer else None
+                            if composer_name != existing_composer:
+                                try:
+                                    if composer_name:
+                                        composer = get_or_create_artist(composer_name)
+                                        if composer:
+                                            existing.ComposerID = composer.ID
+                                    else:
+                                        existing.ComposerID = None
+                                    track_updated = True
+                                except Exception as e:
+                                    print(f"Error updating composer for track {content.ID}: {e}", file=sys.stderr)
+
+                        # Update Album Artist (via Album)
+                        if track.get("AlbumArtist") is not None:
+                            album_artist_name = str(track["AlbumArtist"]) if track["AlbumArtist"] else None
+                            try:
+                                if existing.Album:
+                                    existing_album_artist = existing.AlbumArtistName if existing.Album else None
+                                    if album_artist_name != existing_album_artist:
+                                        if album_artist_name:
+                                            album_artist = get_or_create_artist(album_artist_name)
+                                            if album_artist and existing.Album:
+                                                existing.Album.AlbumArtistID = album_artist.ID
+                                        else:
+                                            if existing.Album:
+                                                existing.Album.AlbumArtistID = None
+                                        track_updated = True
+                            except Exception as e:
+                                print(f"Error updating album artist for track {content.ID}: {e}", file=sys.stderr)
+
+                        # Update Track Number
+                        if track.get("TrackNumber") is not None:
+                            try:
+                                track_num = int(track["TrackNumber"]) if track["TrackNumber"] else None
+                                if track_num != existing.TrackNo:
+                                    existing.TrackNo = track_num
+                                    track_updated = True
+                            except (ValueError, TypeError):
+                                pass
+
+                        # Update Disc Number
+                        if track.get("DiscNumber") is not None:
+                            try:
+                                disc_num = int(track["DiscNumber"]) if track["DiscNumber"] else None
+                                if disc_num != existing.DiscNo:
+                                    existing.DiscNo = disc_num
+                                    track_updated = True
+                            except (ValueError, TypeError):
+                                pass
+
+                        # Update Lyricist
+                        if track.get("Lyricist") is not None:
+                            lyricist_name = str(track["Lyricist"]) if track["Lyricist"] else None
+                            # Get existing lyricist name
+                            existing_lyricist = None
+                            try:
+                                if existing.Lyricist:
+                                    lyricist_artist = self.db.get_artist(ID=existing.Lyricist)
+                                    existing_lyricist = lyricist_artist.Name if lyricist_artist else None
+                            except:
+                                pass
+                            if lyricist_name != existing_lyricist:
+                                try:
+                                    if lyricist_name:
+                                        lyricist = get_or_create_artist(lyricist_name)
+                                        if lyricist:
+                                            existing.LyricistID = lyricist.ID
+                                    else:
+                                        existing.LyricistID = None
+                                    track_updated = True
+                                except Exception as e:
+                                    print(f"Error updating lyricist for track {existing.ID}: {e}", file=sys.stderr)
+
+                        # Update Original Artist
+                        if track.get("OriginalArtist") is not None:
+                            original_artist_name = str(track["OriginalArtist"]) if track["OriginalArtist"] else None
+                            existing_original = existing.OrgArtistName if existing.OrgArtist else None
+                            if original_artist_name != existing_original:
+                                try:
+                                    if original_artist_name:
+                                        original_artist = get_or_create_artist(original_artist_name)
+                                        if original_artist:
+                                            existing.OrgArtistID = original_artist.ID
+                                    else:
+                                        existing.OrgArtistID = None
+                                    track_updated = True
+                                except Exception as e:
+                                    print(f"Error updating original artist for track {content.ID}: {e}", file=sys.stderr)
+
+                        # Update Mix Name (stored in Subtitle field)
+                        if track.get("MixName") is not None:
+                            mix_name = str(track["MixName"]) if track["MixName"] else None
+                            existing_subtitle = existing.Subtitle or None
+                            if mix_name != existing_subtitle:
+                                existing.Subtitle = mix_name
                                 track_updated = True
 
                         # Update MyTags from Bonk custom tags (map categories to Rekordbox buckets)
@@ -1124,27 +1378,126 @@ class RekordboxBridge:
                 
                 if tracks_to_delete:
                     print(f"Found {len(tracks_to_delete)} tracks to delete from Rekordbox", file=sys.stderr)
-                    # Delete tracks from database
-                    for content in tracks_to_delete:
+                    # Batched deletes with rollback-per-batch and corruption hit reporting.
+                    corruption_hits = []
+                    batch_size = 100
+
+                    def chunks(items, n):
+                        for i in range(0, len(items), n):
+                            yield items[i : i + n]
+
+                    remaining = list(tracks_to_delete)
+                    for batch in chunks(remaining, batch_size):
+                        # Stage this batch
                         try:
-                            # Remove from all playlists first
-                            # Get all playlist entries for this track
-                            playlist_entries = self.db.query(DjmdSongPlaylist).filter(
-                                DjmdSongPlaylist.ContentID == content.ID
-                            ).all()
-                            
-                            for entry in playlist_entries:
-                                self.db.session.delete(entry)
-                            
-                            # Delete the content entry
-                            self.db.session.delete(content)
-                            deleted_count += 1
-                            
-                            if deleted_count <= 3:
-                                print(f"  -> Deleting: {content.Title or 'Unknown'} ({content.FolderPath[:60] if content.FolderPath else 'N/A'})", file=sys.stderr)
+                            for content in batch:
+                                self._stage_delete_track(content)
+                            # For deletes, avoid pyrekordbox autoincrement issues in RB7
+                            commit_err = self._safe_commit(autoinc=False)
+                            if commit_err is None:
+                                deleted_count += len(batch)
+                                if deleted_count <= 3:
+                                    print(f"  ✓ Deleted batch of {len(batch)} tracks (total deleted so far: {deleted_count})", file=sys.stderr)
+                                continue
+
+                            # Commit failed; if corruption, bisect to find offenders
+                            if self._is_corruption_error(Exception(commit_err)):
+                                print("  ⚠️  Corruption detected during batch delete; isolating offending tracks...", file=sys.stderr)
+                                # rollback already performed in _safe_commit
+                                for content in batch:
+                                    try:
+                                        self._stage_delete_track(content)
+                                        single_err = self._safe_commit(autoinc=False)
+                                        if single_err is None:
+                                            deleted_count += 1
+                                            continue
+                                        if self._is_corruption_error(Exception(single_err)):
+                                            corruption_hits.append({
+                                                "trackTitle": getattr(content, "Title", None),
+                                                "trackId": getattr(content, "ID", None),
+                                                "folderPath": getattr(content, "FolderPath", None),
+                                                "error": single_err,
+                                            })
+                                            # Ensure we are clean for next
+                                            self._safe_rollback()
+                                            continue
+                                        # Non-corruption error
+                                        errors.append(f"Failed to delete track {getattr(content, 'Title', 'unknown')}: {single_err}")
+                                        self._safe_rollback()
+                                    except Exception as e:
+                                        if self._is_corruption_error(e):
+                                            corruption_hits.append({
+                                                "trackTitle": getattr(content, "Title", None),
+                                                "trackId": getattr(content, "ID", None),
+                                                "folderPath": getattr(content, "FolderPath", None),
+                                                "error": str(e),
+                                            })
+                                        else:
+                                            errors.append(f"Failed to delete track {getattr(content, 'Title', 'unknown')}: {str(e)}")
+                                        self._safe_rollback()
+                                continue
+
+                            # Non-corruption commit error: stop and report
+                            return {
+                                "success": False,
+                                "error": f"Failed to commit deletions: {commit_err}",
+                                "added": added_count,
+                                "updated": updated_count,
+                                "deleted": deleted_count,
+                                "skipped": skipped_count,
+                                "corruption_hits": corruption_hits,
+                            }
+
                         except Exception as e:
-                            errors.append(f"Failed to delete track {content.Title or 'unknown'}: {str(e)}")
-                            print(f"Error deleting track: {e}", file=sys.stderr)
+                            # If corruption while staging, rollback and isolate similarly
+                            self._safe_rollback()
+                            if self._is_corruption_error(e):
+                                print("  ⚠️  Corruption detected while staging batch; isolating offending tracks...", file=sys.stderr)
+                                for content in batch:
+                                    try:
+                                        self._stage_delete_track(content)
+                                        single_err = self._safe_commit(autoinc=False)
+                                        if single_err is None:
+                                            deleted_count += 1
+                                            continue
+                                        if self._is_corruption_error(Exception(single_err)):
+                                            corruption_hits.append({
+                                                "trackTitle": getattr(content, "Title", None),
+                                                "trackId": getattr(content, "ID", None),
+                                                "folderPath": getattr(content, "FolderPath", None),
+                                                "error": single_err,
+                                            })
+                                        else:
+                                            errors.append(f"Failed to delete track {getattr(content, 'Title', 'unknown')}: {single_err}")
+                                        self._safe_rollback()
+                                    except Exception as e2:
+                                        if self._is_corruption_error(e2):
+                                            corruption_hits.append({
+                                                "trackTitle": getattr(content, "Title", None),
+                                                "trackId": getattr(content, "ID", None),
+                                                "folderPath": getattr(content, "FolderPath", None),
+                                                "error": str(e2),
+                                            })
+                                        else:
+                                            errors.append(f"Failed to delete track {getattr(content, 'Title', 'unknown')}: {str(e2)}")
+                                        self._safe_rollback()
+                                continue
+                            return {
+                                "success": False,
+                                "error": f"Failed during deletion staging: {str(e)}",
+                                "added": added_count,
+                                "updated": updated_count,
+                                "deleted": deleted_count,
+                                "skipped": skipped_count,
+                                "corruption_hits": corruption_hits,
+                            }
+
+                    if corruption_hits:
+                        print(f"  ⚠️  Could not delete {len(corruption_hits)} tracks due to DB corruption", file=sys.stderr)
+                        # Treat these as skipped deletions
+                        skipped_count += len(corruption_hits)
+                    # Attach for return payload
+                    self._last_corruption_hits = corruption_hits
             
             # Step 5: Backup database before committing changes (always backup if there are any changes)
             backup_result = None
@@ -1165,7 +1518,13 @@ class RekordboxBridge:
                 try:
                     total_changes = added_count + updated_count + deleted_count
                     print(f"Step 6: Committing {total_changes} changes to database ({added_count} added, {updated_count} updated, {deleted_count} deleted)...", file=sys.stderr)
-                    self.db.commit()
+                    
+                    # Always use autoinc=False: Rekordbox 7 has mixed int/string primary keys that cause
+                    # "Could not sort objects by primary key; '<' not supported between str and int" during flush.
+                    # Skipping USN autoincrement avoids this; data is still saved correctly.
+                    print(f"  Using autoinc=False (avoids Rekordbox 7 mixed primary key type issue)...", file=sys.stderr)
+                    self.db.commit(autoinc=False)
+                    
                     print("✓ Changes committed successfully", file=sys.stderr)
                     print("✓ Export workflow completed successfully", file=sys.stderr)
                 except RuntimeError as e:
@@ -1182,30 +1541,40 @@ class RekordboxBridge:
                         raise
                 except Exception as e:
                     error_str = str(e)
-                    print(f"ERROR during commit: {error_str}", file=sys.stderr)
-                    import traceback
-                    traceback.print_exc(file=sys.stderr)
+                    print(f"⚠️ WARNING: Commit with USN autoincrement failed", file=sys.stderr)
+                    
+                    # Check if it's a database lock/corruption error
+                    is_lock_error = "malformed" in error_str.lower() or "corrupt" in error_str.lower() or "database disk image" in error_str.lower()
+                    
+                    if is_lock_error:
+                        print("💡 This usually means Rekordbox is open and has the database locked.", file=sys.stderr)
+                        print("💡 Attempting fallback: committing without USN autoincrement...", file=sys.stderr)
+                    else:
+                        # For other errors, show full traceback
+                        import traceback
+                        traceback.print_exc(file=sys.stderr)
                     
                     # Try to rollback on error
                     try:
                         self.db.rollback()
-                        print("✓ Rolled back transaction due to commit error", file=sys.stderr)
+                        print("✓ Rolled back transaction", file=sys.stderr)
                     except Exception as rollback_error:
-                        print(f"Error rolling back: {rollback_error}", file=sys.stderr)
+                        print(f"⚠ Error rolling back: {rollback_error}", file=sys.stderr)
                     
-                    # Check if it's a corruption error - try committing without autoincrement
-                    if "malformed" in error_str.lower() or "corrupt" in error_str.lower() or "database disk image" in error_str.lower():
-                        print("Attempting to commit without USN autoincrement...", file=sys.stderr)
+                    # Try committing without autoincrement (works even if Rekordbox is open)
+                    if is_lock_error:
                         try:
                             self.db.commit(autoinc=False)
                             print("✓ Committed successfully without USN updates", file=sys.stderr)
+                            print("ℹ️  Note: All data was saved. USN (Update Sequence Number) was not incremented.", file=sys.stderr)
+                            print("ℹ️  Tip: Close Rekordbox before exporting to avoid this warning and enable USN updates.", file=sys.stderr)
                             return {
                                 "success": True,
                                 "added": added_count,
                                 "updated": updated_count,
                                 "deleted": deleted_count,
                                 "skipped": skipped_count,
-                                "warning": "Committed without USN updates due to database corruption"
+                                "warning": "Committed without USN updates (Rekordbox may be open - close it next time to avoid this)"
                             }
                         except Exception as retry_error:
                             return {
@@ -1218,6 +1587,8 @@ class RekordboxBridge:
                                 "skipped": skipped_count
                             }
                     else:
+                        if "sort" in error_str.lower() and ("str" in error_str or "int" in error_str):
+                            error_str += "\n\nTip: Rekordbox 7 mixed primary key types. Close Rekordbox, backup your DB, then retry."
                         return {
                             "success": False,
                             "error": f"Failed to commit changes: {error_str}",
@@ -1332,35 +1703,37 @@ class RekordboxBridge:
                         for track_id in entries:
                             content_id = track_id_to_content_id.get(track_id)
                             if content_id:
-                                content_ids.append(content_id)
+                                # Convert to int immediately to ensure type consistency
+                                try:
+                                    content_ids.append(int(content_id))
+                                except (ValueError, TypeError):
+                                    print(f"  Warning: Invalid content ID '{content_id}' for track {track_id}, skipping", file=sys.stderr)
                             else:
                                 # Track not found in Rekordbox, skip it
                                 pass
                         
                         if existing:
                             # Update existing playlist
-                            # Clear existing entries
-                            existing_entries = self.db.query(DjmdSongPlaylist).filter(
-                                DjmdSongPlaylist.PlaylistID == existing.ID
-                            ).all()
-                            for entry in existing_entries:
-                                self.db.session.delete(entry)
+                            # Clear existing entries using pyrekordbox tracking (no commit here)
+                            try:
+                                for song in list(getattr(existing, "Songs", []) or []):
+                                    try:
+                                        self.db.delete(song)
+                                    except Exception as e:
+                                        print(f"  Warning: Could not remove song from playlist '{playlist_name}': {e}", file=sys.stderr)
+                            except Exception as e:
+                                print(f"  Warning: Could not enumerate songs for playlist '{playlist_name}': {e}", file=sys.stderr)
                             
-                            # Add new entries
+                            # Add new entries using pyrekordbox high-level API (handles TrackNo/USN)
                             for idx, content_id in enumerate(content_ids):
                                 try:
-                                    content = self.db.get_content(ID=int(content_id))
+                                    content = self.db.get_content(ID=content_id)
                                     if content is None:
                                         print(f"  Warning: Track {content_id} not found in database, skipping", file=sys.stderr)
                                         continue
-                                    entry = DjmdSongPlaylist(
-                                        PlaylistID=existing.ID,
-                                        ContentID=content.ID,
-                                        TrackNo=idx + 1
-                                    )
-                                    self.db.session.add(entry)
+                                    self.db.add_to_playlist(existing, content, track_no=idx + 1)
                                 except Exception as e:
-                                    print(f"  Warning: Could not add track {content_id} to playlist: {e}", file=sys.stderr)
+                                    print(f"  Warning: Could not add track {content_id} to playlist '{playlist_name}': {e}", file=sys.stderr)
                             
                             # Update parent if changed
                             if parent_playlist and existing.ParentID != parent_playlist.ID:
@@ -1376,18 +1749,13 @@ class RekordboxBridge:
                             # Add tracks to playlist
                             for idx, content_id in enumerate(content_ids):
                                 try:
-                                    content = self.db.get_content(ID=int(content_id))
+                                    content = self.db.get_content(ID=content_id)
                                     if content is None:
                                         print(f"  Warning: Track {content_id} not found in database, skipping", file=sys.stderr)
                                         continue
-                                    entry = DjmdSongPlaylist(
-                                        PlaylistID=new_playlist.ID,
-                                        ContentID=content.ID,
-                                        TrackNo=idx + 1
-                                    )
-                                    self.db.session.add(entry)
+                                    self.db.add_to_playlist(new_playlist, content, track_no=idx + 1)
                                 except Exception as e:
-                                    print(f"  Warning: Could not add track {content_id} to playlist: {e}", file=sys.stderr)
+                                    print(f"  Warning: Could not add track {content_id} to playlist '{playlist_name}': {e}", file=sys.stderr)
                             
                             playlist_added_count += 1
                             print(f"  Created playlist: {playlist_name} ({len(content_ids)} tracks)", file=sys.stderr)
@@ -1545,6 +1913,7 @@ class RekordboxBridge:
                 "playlists_added": playlist_added_count,
                 "playlists_updated": playlist_updated_count,
                 "playlists_skipped": playlist_skipped_count,
+                "corruption_hits": getattr(self, "_last_corruption_hits", None) or None,
                 "errors": errors if errors else None,
                 "db_path": actual_db_path
             }
@@ -1563,6 +1932,23 @@ class RekordboxBridge:
                 result = self.open_database(db_path)
                 if not result["success"]:
                     return result
+            
+            # PRE-FLIGHT CHECK: Verify database integrity before making any changes
+            print("Checking database integrity...", file=sys.stderr)
+            try:
+                # Test database accessibility by querying critical tables
+                test_query = self.db.get_content().limit(1).all()
+                from pyrekordbox.db6.tables import DjmdSongPlaylist
+                test_playlist = self.db.query(DjmdSongPlaylist).limit(1).all()
+                print("✓ Database integrity check passed", file=sys.stderr)
+            except Exception as integrity_error:
+                error_msg = str(integrity_error)
+                if "malformed" in error_msg.lower() or "corrupt" in error_msg.lower() or "disk image" in error_msg.lower():
+                    return {
+                        "success": False,
+                        "error": f"❌ DATABASE IS CORRUPTED: {error_msg}\n\nThe database cannot be safely modified. You must restore from a clean backup first."
+                    }
+                print(f"⚠ Could not check database integrity: {error_msg}", file=sys.stderr)
             
             updated_in_db = 0
             updated_in_bonk = 0
@@ -1703,7 +2089,8 @@ class RekordboxBridge:
             # Try to find track by ID first (if it's a numeric ID)
             try:
                 track_id_int = int(track_id)
-                content = self.db.get_content(ID=track_id_int).one_or_none()
+                # get_content(ID=...) already returns DjmdContent or None, not a query
+                content = self.db.get_content(ID=track_id_int)
             except (ValueError, TypeError):
                 # Track ID is not numeric (probably from XML import)
                 # Try to find by file path instead
@@ -1760,10 +2147,25 @@ class RekordboxBridge:
                 "new_path": normalized_path
             }
         except Exception as e:
-            return {
-                "success": False,
-                "error": f"Failed to update track path: {str(e)}"
-            }
+            error_msg = str(e)
+            # Check for common database errors
+            if "database disk image is malformed" in error_msg or "malformed" in error_msg.lower():
+                # Database corruption or lock issue
+                if "locked" in error_msg.lower() or "busy" in error_msg.lower():
+                    return {
+                        "success": False,
+                        "error": f"Database is locked. Please close Rekordbox and try again. Error: {error_msg}"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": f"Database corruption detected. The database may be locked by Rekordbox, or a specific record is corrupted. Try closing Rekordbox and try again. Error: {error_msg}"
+                    }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Failed to update track path: {error_msg}"
+                }
     
     def create_smart_playlist(self, name: str, conditions: List[Dict], logical_operator: int = 1, parent: Optional[str] = None) -> Dict[str, Any]:
         """Create a smart playlist with specified conditions"""
@@ -1866,6 +2268,90 @@ class RekordboxBridge:
             return {
                 "success": False,
                 "error": f"Failed to create smart playlist: {str(e)}"
+            }
+
+    def get_anlz_data(self, track_path: str, db_path: Optional[str] = None) -> Dict[str, Any]:
+        """Get waveform preview and cues from Rekordbox ANLZ analysis for a track."""
+        try:
+            if not self.db:
+                result = self.open_database(db_path)
+                if not result["success"]:
+                    return result
+
+            normalized = str(track_path).replace("\\", "/")
+            for prefix in ("file://localhost", "file://"):
+                if normalized.lower().startswith(prefix.lower()):
+                    normalized = normalized[len(prefix):].lstrip("/")
+                    break
+            normalized = normalized.strip()
+
+            content = self.db.get_content(FolderPath=normalized).one_or_none()
+            if not content:
+                for c in self.db.get_content():
+                    if not c.FolderPath:
+                        continue
+                    p = str(c.FolderPath).replace("\\", "/")
+                    if p.lower() == normalized.lower():
+                        content = c
+                        break
+            if not content:
+                return {"success": True, "waveform": None, "cues": [], "duration_ms": None}
+
+            duration_ms = None
+            if content.Length is not None:
+                duration_ms = int(content.Length * 1000)
+
+            waveform = None
+            cues: List[Dict[str, Any]] = []
+
+            try:
+                anlz_files = self.db.read_anlz_files(content)
+            except Exception as e:
+                return {
+                    "success": True,
+                    "waveform": None,
+                    "cues": [],
+                    "duration_ms": duration_ms,
+                    "error": str(e),
+                }
+
+            for fpath, anlz_file in anlz_files.items():
+                try:
+                    if "PWAV" in anlz_file and waveform is None:
+                        tag = anlz_file.get_tag("PWAV")
+                        h, _ = tag.get()
+                        waveform = {"preview": [int(x) for x in h.tolist()]}
+                    if "PWV4" in anlz_file and waveform is None:
+                        tag = anlz_file.get_tag("PWV4")
+                        heights, _, _ = tag.get()
+                        n = int(heights.shape[0])
+                        wf = [int(heights[i, 0]) for i in range(n)]
+                        waveform = {"preview": wf}
+
+                    for tag in anlz_file.getall_tags("PCOB"):
+                        for ent in tag.struct.entries:
+                            cues.append({
+                                "time_ms": int(ent.time),
+                                "loop_end_ms": int(ent.loop_time) if getattr(ent, "loop_time", None) is not None and int(ent.loop_time) >= 0 else None,
+                                "hot_cue": int(ent.hot_cue),
+                                "type": "loop" if "loop" in str(getattr(ent, "type", "")).lower() else "cue",
+                            })
+                except Exception as e:
+                    pass
+
+            return {
+                "success": True,
+                "waveform": waveform,
+                "cues": cues,
+                "duration_ms": duration_ms,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "waveform": None,
+                "cues": [],
+                "duration_ms": None,
             }
 
     def get_smart_playlist_contents(self, playlist_id: str) -> Dict[str, Any]:
@@ -2153,7 +2639,7 @@ class RekordboxBridge:
                                     if not artist:
                                         artist = self.db.add_artist(name=updated_data['Artist'], search_str=updated_data['Artist'].upper())
                                     if artist and artist.ID:
-                                        content.ArtistID = int(artist.ID)
+                                        content.ArtistID = artist.ID
                                 except Exception as e:
                                     print(f"Error updating artist for track {content.ID}: {e}", file=sys.stderr)
 
@@ -2165,7 +2651,7 @@ class RekordboxBridge:
                                     if not album:
                                         album = self.db.add_album(name=updated_data['Album'])
                                     if album and album.ID:
-                                        content.AlbumID = int(album.ID)
+                                        content.AlbumID = album.ID
                                 except Exception as e:
                                     print(f"Error updating album for track {content.ID}: {e}", file=sys.stderr)
 
@@ -2177,7 +2663,7 @@ class RekordboxBridge:
                                     if not genre:
                                         genre = self.db.add_genre(name=updated_data['Genre'])
                                     if genre and genre.ID:
-                                        content.GenreID = int(genre.ID)
+                                        content.GenreID = genre.ID
                                 except Exception as e:
                                     print(f"Error updating genre for track {content.ID}: {e}", file=sys.stderr)
 
@@ -2185,7 +2671,23 @@ class RekordboxBridge:
                             content.Commnt = updated_data['Comments'] or None
 
                         if updated_data['Label'] != original_data['Label']:
-                            content.LabelName = updated_data['Label'] or None
+                            # Update Label - use LabelID, not LabelName (which is an association_proxy)
+                            if updated_data['Label'] and updated_data['Label'].strip():
+                                try:
+                                    label = self.db.get_label(Name=updated_data['Label']).one_or_none()
+                                    if not label:
+                                        label = self.db.add_label(name=updated_data['Label'])
+                                    if label and label.ID:
+                                        content.LabelID = label.ID
+                                except ValueError:
+                                    # Label already exists, get it
+                                    label = self.db.get_label(Name=updated_data['Label']).one()
+                                    if label and label.ID:
+                                        content.LabelID = label.ID
+                                except Exception as e:
+                                    print(f"Error updating label for track {content.ID}: {e}", file=sys.stderr)
+                            else:
+                                content.LabelID = None
 
                         updated_count += 1
                         updates.append(updated_data)
@@ -2504,6 +3006,21 @@ def main():
                     result = open_result
                 else:
                     result = bridge.repair_database()
+
+        elif command == "get-anlz-data":
+            if len(sys.argv) < 3:
+                result = {"success": False, "error": "Missing track path"}
+            else:
+                arg = sys.argv[2]
+                if arg.startswith("@"):
+                    with open(arg[1:], "r") as f:
+                        data = json.load(f)
+                    track_path = data.get("track_path", "")
+                    db_path = data.get("db_path")
+                else:
+                    track_path = arg
+                    db_path = sys.argv[3] if len(sys.argv) > 3 else None
+                result = bridge.get_anlz_data(track_path, db_path)
 
         else:
             result = {"success": False, "error": f"Unknown command: {command}"}

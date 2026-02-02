@@ -1,28 +1,39 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Tag, Plus, XCircle } from 'lucide-react';
+import { X, Save, Tag, Plus, XCircle, Music } from 'lucide-react';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { Track } from '../types/track';
+import AudioPlayer from './AudioPlayer';
+import AuditionErrorBoundary from './AuditionErrorBoundary';
 
 export default function TrackEditor() {
-  const { selectedTrack, setSelectedTrack, updateTrack, genres } = useLibraryStore();
+  const { library, selectedTrack, setSelectedTrack, updateTrack, genres, auditionTrackId, setAuditionTrackId } = useLibraryStore();
   const [newTagCategory, setNewTagCategory] = useState('');
   const [newTagName, setNewTagName] = useState('');
   const [editedTrack, setEditedTrack] = useState<Track | null>(null);
   const [genreInput, setGenreInput] = useState('');
   const [showGenreDropdown, setShowGenreDropdown] = useState(false);
+  const [showPlayer, setShowPlayer] = useState(false);
 
   useEffect(() => {
     setEditedTrack(selectedTrack);
     setGenreInput(selectedTrack?.Genre || '');
   }, [selectedTrack]);
 
+  useEffect(() => {
+    if (selectedTrack && auditionTrackId === selectedTrack.TrackID) {
+      setShowPlayer(true);
+      setAuditionTrackId(null);
+    }
+  }, [selectedTrack, auditionTrackId, setAuditionTrackId]);
+
   if (!editedTrack) return null;
 
   const handleSave = () => {
-    if (editedTrack) {
-      updateTrack(editedTrack.TrackID, editedTrack);
-      setSelectedTrack(editedTrack);
-    }
+    if (!editedTrack) return;
+    const current = library?.tracks.find((t) => t.TrackID === editedTrack.TrackID);
+    const toSave = { ...editedTrack, CuePoints: current?.CuePoints ?? editedTrack.CuePoints };
+    updateTrack(editedTrack.TrackID, toSave);
+    setSelectedTrack(toSave);
   };
 
   const handleChange = (field: keyof Track, value: string) => {
@@ -64,9 +75,19 @@ export default function TrackEditor() {
     <div className="track-editor">
       <div className="editor-header">
         <h2>Edit Track</h2>
-        <button className="close-btn" onClick={() => setSelectedTrack(null)}>
-          <X size={20} />
-        </button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button 
+            className="btn btn-sm btn-accent" 
+            onClick={() => setShowPlayer(!showPlayer)}
+            title="Audition track (waveform, cues, playback)"
+          >
+            <Music size={16} />
+            {showPlayer ? 'Hide' : 'Audition'}
+          </button>
+          <button className="close-btn" onClick={() => { setSelectedTrack(null); setAuditionTrackId(null); }}>
+            <X size={20} />
+          </button>
+        </div>
       </div>
 
       <div className="editor-content">
@@ -109,7 +130,6 @@ export default function TrackEditor() {
               setTimeout(() => setShowGenreDropdown(false), 200);
             }}
             placeholder="Type or select a genre"
-            list="genre-list"
           />
           {showGenreDropdown && filteredGenres.length > 0 && (
             <div
@@ -150,11 +170,6 @@ export default function TrackEditor() {
               ))}
             </div>
           )}
-          <datalist id="genre-list">
-            {genres.map((genre) => (
-              <option key={genre} value={genre} />
-            ))}
-          </datalist>
         </div>
 
         <div className="form-row">
@@ -294,6 +309,17 @@ export default function TrackEditor() {
           </button>
         </div>
       </div>
+
+      {/* Audio Player Modal */}
+      {showPlayer && editedTrack && (
+        <div className="modal-overlay" onClick={() => setShowPlayer(false)}>
+          <div className="modal modal-large audio-player-modal" onClick={(e) => e.stopPropagation()}>
+            <AuditionErrorBoundary onClose={() => setShowPlayer(false)}>
+              <AudioPlayer track={editedTrack} onClose={() => setShowPlayer(false)} />
+            </AuditionErrorBoundary>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

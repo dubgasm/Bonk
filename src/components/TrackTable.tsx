@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { useAutoTagStore } from '../store/useAutoTagStore';
 import TrackContextMenu from './TrackContextMenu';
 import FindTagsModal from './FindTagsModal';
 import TrackTableToolbar from './TrackTableToolbar';
@@ -14,6 +15,8 @@ import FormatConversionModal, { FormatConversion } from './FormatConversionModal
 import FindLostTracksModal from './FindLostTracksModal';
 import RemoveFromPlaylistModal from './RemoveFromPlaylistModal';
 import SmartFixesModal, { SmartFixConfig } from './SmartFixesModal';
+import DeleteTracksModal from './DeleteTracksModal';
+import AudioFeaturesWizard from './AudioFeaturesWizard';
 import { TagFinderOptions } from '../types/musicDatabase';
 import { Track } from '../types/track';
 const columnTemplate = '40px 60px 1.5fr 1.2fr 1.2fr 1fr 0.8fr 1fr 0.7fr 0.6fr';
@@ -25,6 +28,7 @@ export default function TrackTable() {
     selectedTracks,
     selectedPlaylist,
     setSelectedTrack,
+    setAuditionTrackId,
     toggleTrackSelection,
     selectAll,
     clearSelection,
@@ -35,9 +39,11 @@ export default function TrackTable() {
     convertTrackFormats,
     removeTracksFromPlaylist,
     applySmartFixes,
+    updateTrack,
   } = useLibraryStore();
 
   const { skipPlaylistRemovalConfirm, setSkipPlaylistRemovalConfirm } = useSettingsStore();
+  const { openModal: openAutoTagWizard } = useAutoTagStore();
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; track?: typeof filteredTracks[0] } | null>(null);
   const [showFindTagsModal, setShowFindTagsModal] = useState(false);
@@ -47,14 +53,25 @@ export default function TrackTable() {
   const [showFindLostTracksModal, setShowFindLostTracksModal] = useState(false);
   const [showRemoveFromPlaylistModal, setShowRemoveFromPlaylistModal] = useState(false);
   const [showSmartFixesModal, setShowSmartFixesModal] = useState(false);
+  const [showAudioFeaturesWizard, setShowAudioFeaturesWizard] = useState(false);
+  const [audioFeaturesFiles, setAudioFeaturesFiles] = useState<string[]>([]);
   const [showTagsModal, setShowTagsModal] = useState(false);
   const [showBatchTagUpdateModal, setShowBatchTagUpdateModal] = useState(false);
   const [showBatchGenreUpdateModal, setShowBatchGenreUpdateModal] = useState(false);
+  const [showDeleteTracksModal, setShowDeleteTracksModal] = useState(false);
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
   const [tagSelectorTrack, setTagSelectorTrack] = useState<Track | null>(null);
   const [modalTrack, setModalTrack] = useState<typeof filteredTracks[0] | null>(null);
   const [editingCell, setEditingCell] = useState<{ trackId: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [isCheckingMissing, setIsCheckingMissing] = useState(false);
+  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+
+  const requestDeleteTracks = (trackIds: string[]) => {
+    if (!trackIds.length) return;
+    setPendingDeleteIds(trackIds);
+    setShowDeleteTracksModal(true);
+  };
 
   // Memoize formatTime to avoid recalculating on every render
   const formatTime = useCallback((ms: string | undefined) => {
@@ -66,16 +83,35 @@ export default function TrackTable() {
   }, []);
 
   const handleRowClick = (track: Track, e: React.MouseEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      // Multi-select with Cmd/Ctrl
-      toggleTrackSelection(track.TrackID);
-    } else if (e.shiftKey) {
-      // Could implement range selection here
-      toggleTrackSelection(track.TrackID);
-    } else {
-      // Single select
+    const idx = filteredTracks.findIndex((t) => t.TrackID === track.TrackID);
+    if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
       setSelectedTrack(track);
+      setAuditionTrackId(track.TrackID);
+      setLastClickedIndex(idx >= 0 ? idx : null);
+      return;
     }
+    if (e.shiftKey && (e.ctrlKey || e.metaKey)) {
+      if (lastClickedIndex === null || idx < 0) {
+        toggleTrackSelection(track.TrackID);
+        setLastClickedIndex(idx >= 0 ? idx : null);
+        return;
+      }
+      const start = Math.min(lastClickedIndex, idx);
+      const end = Math.max(lastClickedIndex, idx);
+      const idsInRange = filteredTracks.slice(start, end + 1).map((t) => t.TrackID);
+      idsInRange.forEach((id) => {
+        if (!selectedTracks.has(id)) toggleTrackSelection(id);
+      });
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      toggleTrackSelection(track.TrackID);
+      setLastClickedIndex(idx >= 0 ? idx : null);
+      return;
+    }
+    setSelectedTrack(track);
+    setAuditionTrackId(null);
+    setLastClickedIndex(idx >= 0 ? idx : null);
   };
 
   const handleContextMenu = (track: Track, e: React.MouseEvent) => {
@@ -155,7 +191,6 @@ export default function TrackTable() {
   }, [editingCell, editValue, handleCellBlur, handleCellKeyDown, handleCellDoubleClick]);
 
   const { tagWriteSettings } = useSettingsStore();
-  const { updateTrack } = useLibraryStore();
 
   const handleWriteTags = async (track?: typeof filteredTracks[0]) => {
     // If a specific track is provided (right-click), use it; otherwise use selected tracks
@@ -516,6 +551,36 @@ export default function TrackTable() {
         onManageTags={() => setShowTagsModal(true)}
         onBatchUpdateTags={() => setShowBatchTagUpdateModal(true)}
         onBatchUpdateGenres={() => setShowBatchGenreUpdateModal(true)}
+        onDeleteSelected={() => requestDeleteTracks(Array.from(selectedTracks))}
+        onAutoTag={() => {
+          // Get file paths for selected tracks
+          const selectedTrackPaths = filteredTracks
+            .filter(t => selectedTracks.has(t.TrackID))
+            .map(t => {
+              if (!t.Location) return null;
+              let p = t.Location;
+              if (p.startsWith('file://localhost/')) p = p.replace('file://localhost/', '/');
+              else if (p.startsWith('file://')) p = p.replace('file://', '');
+              try { return decodeURIComponent(p); } catch { return p; }
+            })
+            .filter((p): p is string => p !== null);
+          openAutoTagWizard(selectedTrackPaths);
+        }}
+        onAudioFeatures={() => {
+          // Get file paths for selected tracks
+          const selectedTrackPaths = filteredTracks
+            .filter(t => selectedTracks.has(t.TrackID))
+            .map(t => {
+              if (!t.Location) return null;
+              let p = t.Location;
+              if (p.startsWith('file://localhost/')) p = p.replace('file://localhost/', '/');
+              else if (p.startsWith('file://')) p = p.replace('file://', '');
+              try { return decodeURIComponent(p); } catch { return p; }
+            })
+            .filter((p): p is string => p !== null);
+          setAudioFeaturesFiles(selectedTrackPaths);
+          setShowAudioFeaturesWizard(true);
+        }}
       />
       
       <div className="track-table-container">
@@ -581,6 +646,7 @@ export default function TrackTable() {
                     onContextMenu={(e) => handleContextMenu(track, e)}
                     draggable={!track.isMissing}
                     onDragStart={(e) => handleDragStart(e, track)}
+                    onDragEnd={(e) => { try { e.stopPropagation(); } catch (_) {} }}
                   >
                     <div onClick={(e) => e.stopPropagation()}>
                       <input
@@ -644,6 +710,13 @@ export default function TrackTable() {
           selectedCount={selectedTracks.size}
           selectedPlaylist={selectedPlaylist}
           onRemoveFromPlaylist={() => handleRemoveFromPlaylist(contextMenu.track)}
+          onDeleteTracks={() => {
+            const tracksToDelete = selectedTracks.size > 0 
+              ? Array.from(selectedTracks) 
+              : contextMenu.track ? [contextMenu.track.TrackID] : [];
+            
+            requestDeleteTracks(tracksToDelete);
+          }}
         />
       )}
 
@@ -764,6 +837,31 @@ export default function TrackTable() {
           trackCount={selectedTracks.size > 0 ? selectedTracks.size : filteredTracks.length}
         />
       )}
+
+      <DeleteTracksModal
+        isOpen={showDeleteTracksModal}
+        onClose={() => {
+          setShowDeleteTracksModal(false);
+          setPendingDeleteIds([]);
+        }}
+        onConfirm={() => {
+          deleteTracks(pendingDeleteIds);
+          clearSelection();
+          setShowDeleteTracksModal(false);
+          setPendingDeleteIds([]);
+        }}
+        trackCount={pendingDeleteIds.length}
+        contextLabel={selectedPlaylist ? `"${selectedPlaylist.Name}"` : undefined}
+      />
+
+      <AudioFeaturesWizard
+        isOpen={showAudioFeaturesWizard}
+        onClose={() => {
+          setShowAudioFeaturesWizard(false);
+          setAudioFeaturesFiles([]);
+        }}
+        selectedFiles={audioFeaturesFiles}
+      />
     </div>
   );
 }

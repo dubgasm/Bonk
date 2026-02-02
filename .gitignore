@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Temporary / cloned repos
+.tmp/
+
 # Build outputs
 dist/
 release/

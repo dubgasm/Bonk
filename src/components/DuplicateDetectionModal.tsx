@@ -159,6 +159,7 @@ export default function DuplicateDetectionModal({
           deleteTracks,
         });
       }
+
     }
 
     return groups;
@@ -192,18 +193,18 @@ export default function DuplicateDetectionModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content duplicate-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal modal-large duplicate-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <div className="modal-title">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <Copy size={24} />
-            <span>Duplicate Detection</span>
+            <h2>Duplicate Detection</h2>
           </div>
           <button className="modal-close" onClick={onClose}>
             <X size={20} />
           </button>
         </div>
 
-        <div className="modal-body">
+        <div className="modal-content">
           {isScanning ? (
             <div className="scanning-state">
               <div className="spinner"></div>
@@ -280,22 +281,24 @@ export default function DuplicateDetectionModal({
                   </div>
                 ))}
               </div>
-
-              <div className="modal-actions">
-                <button className="btn-secondary" onClick={onClose}>
-                  Cancel
-                </button>
-                <button
-                  className="btn-danger"
-                  onClick={handleDeleteDuplicates}
-                >
-                  <Trash2 size={18} />
-                  Delete All Duplicates ({duplicateGroups.reduce((sum, g) => sum + g.deleteTracks.length, 0)})
-                </button>
-              </div>
             </>
           )}
         </div>
+        
+        {!isScanning && duplicateGroups.length > 0 && (
+          <div className="modal-footer">
+            <button className="btn btn-secondary" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              className="btn btn-danger"
+              onClick={handleDeleteDuplicates}
+            >
+              <Trash2 size={18} />
+              Delete All Duplicates ({duplicateGroups.reduce((sum, g) => sum + g.deleteTracks.length, 0)})
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

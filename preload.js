@@ -33,6 +33,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readAudioFile: (filePath) => ipcRenderer.invoke('read-audio-file', filePath),
   transcodeForAudition: (filePath) => ipcRenderer.invoke('transcode-for-audition', filePath),
   getAnlzData: (trackPath, dbPath) => ipcRenderer.invoke('get-anlz-data', trackPath, dbPath),
+  // Rust audio player handlers
+  rustAudioInit: () => ipcRenderer.invoke('rust-audio-init'),
+  rustAudioLoad: (filePath) => ipcRenderer.invoke('rust-audio-load', filePath),
+  rustAudioPlay: () => ipcRenderer.invoke('rust-audio-play'),
+  rustAudioPause: () => ipcRenderer.invoke('rust-audio-pause'),
+  rustAudioStop: () => ipcRenderer.invoke('rust-audio-stop'),
+  rustAudioSetVolume: (volume) => ipcRenderer.invoke('rust-audio-set-volume', volume),
+  rustAudioGetDuration: () => ipcRenderer.invoke('rust-audio-get-duration'),
+  rustAudioGetPosition: () => ipcRenderer.invoke('rust-audio-get-position'),
+  rustAudioIsPlaying: () => ipcRenderer.invoke('rust-audio-is-playing'),
+   rustAudioSeek: (seconds) => ipcRenderer.invoke('rust-audio-seek', seconds),
+   rustAudioGetWaveform: (filePath, buckets) => ipcRenderer.invoke('rust-audio-get-waveform', filePath, buckets),
+  // Quick Tag: Write POPM rating
+  audioTagsSetRating: (filePath, stars) => ipcRenderer.invoke('audioTags:setRating', filePath, stars),
+  audioTagsSetRatingByte: (filePath, ratingByte) => ipcRenderer.invoke('audioTags:setRatingByte', filePath, ratingByte),
   // Audio conversion handlers
   convertAudioFile: (inputPath, outputPath, format) => ipcRenderer.invoke('convert-audio-file', inputPath, outputPath, format),
   batchConvertTracks: (conversions, options) => ipcRenderer.invoke('batch-convert-tracks', conversions, options),

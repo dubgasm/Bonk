@@ -15,6 +15,7 @@ import GenreManagementSuite from './components/GenreManagementSuite';
 import PlaylistSidebar from './components/PlaylistSidebar';
 import AutoTagWizard from './components/AutoTagWizard';
 import AudioFeaturesWizard from './components/AudioFeaturesWizard';
+import QuickTagScreen from './components/QuickTagScreen';
 import { FolderOpen, Tag, Music, Database, Archive, FileText, Sparkles, Activity } from 'lucide-react';
 import { Track } from './types/track';
 import { Toaster } from 'sonner';
@@ -51,6 +52,21 @@ declare global {
       onConversionProgress?: (callback: (data: any) => void) => void;
       removeConversionProgressListener?: () => void;
       readAudioFile?: (filePath: string) => Promise<{ success: boolean; buffer?: string; mimeType?: string; error?: string }>;
+      // Rust native audio player (Quick Tag + audition)
+      rustAudioInit?: () => Promise<{ success: boolean; error?: string }>;
+      rustAudioLoad?: (filePath: string) => Promise<{ success: boolean; duration?: number; error?: string }>;
+      rustAudioPlay?: () => Promise<{ success: boolean; error?: string }>;
+      rustAudioPause?: () => Promise<{ success: boolean; error?: string }>;
+      rustAudioStop?: () => Promise<{ success: boolean; error?: string }>;
+      rustAudioSetVolume?: (volume: number) => Promise<{ success: boolean; error?: string }>;
+      rustAudioGetDuration?: () => Promise<{ success: boolean; duration: number; error?: string }>;
+      rustAudioGetPosition?: () => Promise<{ success: boolean; position: number; error?: string }>;
+      rustAudioIsPlaying?: () => Promise<{ success: boolean; isPlaying: boolean; error?: string }>;
+      rustAudioSeek?: (seconds: number) => Promise<{ success: boolean; error?: string }>;
+      rustAudioGetWaveform?: (filePath: string, buckets: number) => Promise<{ success: boolean; waveform?: { duration_ms: number; peaks: number[] }; error?: string }>;
+      // Quick Tag: Write POPM rating (accepts ratingByte 0-255 directly)
+      audioTagsSetRating?: (filePath: string, ratingByte: number) => Promise<{ success: boolean; ratingByte?: number; stars?: number; error?: string }>;
+      audioTagsSetRatingByte?: (filePath: string, ratingByte: number) => Promise<{ success: boolean; ratingByte?: number; stars?: number; error?: string }>;
       // AutoTag handlers
       autotagStart?: (config: any) => Promise<{ success: boolean; results?: any[]; cancelled?: boolean; error?: string }>;
       autotagPause?: (runId: string) => Promise<{ success: boolean; error?: string }>;
@@ -84,6 +100,7 @@ function App() {
   const [showAudioFeaturesWizard, setShowAudioFeaturesWizard] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [mode, setMode] = useState<'library' | 'quickTag'>('library');
   const dragEnterDepth = useRef(0);
   const { 
     library, 
@@ -176,6 +193,60 @@ function App() {
   const handleRekordboxDBSync = (syncedLibrary: any) => {
     setLibrary(syncedLibrary);
     setLastSyncDate(new Date().toISOString());
+  };
+
+  // Quick import from Rekordbox using configured/auto-detected master.db
+  const handleQuickRekordboxImport = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      if (!window.electronAPI?.rekordboxImportDatabase) {
+        throw new Error('Rekordbox import is not available. Please run the app with: npm run dev');
+      }
+
+      const result = await (window.electronAPI as any).rekordboxImportDatabase(null);
+
+      if (!result?.success || !result.library) {
+        throw new Error(result?.error || 'Failed to import from Rekordbox database');
+      }
+
+      handleRekordboxDBImport(result.library);
+    } catch (err: any) {
+      setError(err.message || 'Failed to import from Rekordbox database');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Import from a user-selected Rekordbox master.db path
+  const handleCustomRekordboxImport = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      if (!window.electronAPI?.rekordboxSelectDatabase || !window.electronAPI?.rekordboxImportDatabase) {
+        throw new Error('Rekordbox database tools are not available. Please run the app with: npm run dev');
+      }
+
+      const dbPath = await (window.electronAPI as any).rekordboxSelectDatabase();
+      if (!dbPath) {
+        setLoading(false);
+        return;
+      }
+
+      const result = await (window.electronAPI as any).rekordboxImportDatabase(dbPath);
+
+      if (!result?.success || !result.library) {
+        throw new Error(result?.error || 'Failed to import from selected Rekordbox database');
+      }
+
+      handleRekordboxDBImport(result.library);
+    } catch (err: any) {
+      setError(err.message || 'Failed to import from selected Rekordbox database');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleImport = async () => {
@@ -508,6 +579,8 @@ function App() {
         onDatabase={() => setShowRekordboxDBModal(true)}
         loading={loading}
         hasLibrary={!!library}
+        onQuickTag={() => setMode('quickTag')}
+        isQuickTagMode={mode === 'quickTag'}
       />
       
       {error && (
@@ -517,7 +590,7 @@ function App() {
         </div>
       )}
 
-      {!library && !loading && (
+      {mode === 'library' && !library && !loading && (
         <div className="welcome">
           <div className="welcome-content">
             <div className="welcome-hero">
@@ -528,15 +601,19 @@ function App() {
             <div className="welcome-actions">
               <div className="welcome-card welcome-card-primary">
                 <h2>Rekordbox Database</h2>
-                <p>Import directly from your Rekordbox master.db or create a backup first.</p>
+                <p>Quickly import from your Rekordbox master.db, or choose a custom database path.</p>
                 <div className="welcome-card-buttons">
-                  <button className="import-btn-large" onClick={() => setShowRekordboxDBModal(true)}>
+                  <button className="import-btn-large" onClick={handleQuickRekordboxImport} disabled={loading}>
                     <Database size={22} />
-                    <span>Import from Database</span>
+                    <span>Import from Rekordbox DB</span>
                   </button>
-                  <button className="import-btn-large import-btn-secondary" onClick={() => setShowRekordboxDBModal(true)}>
+                  <button
+                    className="import-btn-large import-btn-secondary"
+                    onClick={handleCustomRekordboxImport}
+                    disabled={loading}
+                  >
                     <Archive size={22} />
-                    <span>Backup Database</span>
+                    <span>Import from Custom DB Path</span>
                   </button>
                 </div>
               </div>
@@ -592,7 +669,7 @@ function App() {
         </div>
       )}
 
-      {library && !loading && (
+      {mode === 'library' && library && !loading && (
         <div className="main-content with-sidebar">
           <PlaylistSidebar
             playlists={library.playlists}
@@ -631,6 +708,10 @@ function App() {
             )}
           </div>
         </div>
+      )}
+
+      {mode === 'quickTag' && !loading && (
+        <QuickTagScreen />
       )}
 
       {showExportModal && library && (

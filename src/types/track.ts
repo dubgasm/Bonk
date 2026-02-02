@@ -14,7 +14,8 @@ export interface Track {
   SampleRate?: string;
   Comments?: string;
   PlayCount?: string;
-  Rating?: string;
+  Rating?: string;  // Legacy: kept for migration, prefer ratingByte
+  ratingByte?: number; // 0..255 POPM rating byte (single source of truth)
   Location?: string;
   Remixer?: string;
   Tonality?: string;

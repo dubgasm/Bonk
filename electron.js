@@ -18,6 +18,23 @@ try {
   sharp = null;
 }
 
+// Load Rust audio player (native module)
+let AudioPlayer;
+let getWaveformNative = null;
+let rustAudioPlayer = null;
+try {
+  const nativeAudioPath = path.join(__dirname, 'native-audio');
+  const native = require(nativeAudioPath);
+  AudioPlayer = native.AudioPlayer;
+  getWaveformNative = native.getWaveform || native.getWaveformNative || null;
+  console.log('✓ Rust audio player loaded successfully');
+} catch (error) {
+  console.error('Failed to load Rust audio player:', error);
+  console.error('Audio playback will fall back to HTML5 Audio');
+  AudioPlayer = null;
+  getWaveformNative = null;
+}
+
 const { exec, spawn } = require('child_process');
 const { promisify } = require('util');
 const os = require('os');
@@ -494,6 +511,159 @@ ipcMain.handle('transcode-for-audition', async (_, filePath) => {
   }
 });
 
+// Rust audio player IPC handlers
+ipcMain.handle('rust-audio-init', async () => {
+  if (!AudioPlayer) {
+    return { success: false, error: 'Rust audio player not available' };
+  }
+  try {
+    if (!rustAudioPlayer) {
+      rustAudioPlayer = new AudioPlayer();
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('rust-audio-load', async (_, filePath) => {
+  if (!AudioPlayer || !rustAudioPlayer) {
+    return { success: false, error: 'Rust audio player not initialized' };
+  }
+  try {
+    let cleanPath = filePath;
+    if (cleanPath.startsWith('file://localhost/')) {
+      cleanPath = cleanPath.replace('file://localhost/', '/');
+    } else if (cleanPath.startsWith('file://')) {
+      cleanPath = cleanPath.replace('file://', '');
+    }
+    cleanPath = decodeURIComponent(cleanPath).replace(/\\/g, '/');
+    
+    const duration = rustAudioPlayer.loadFile(cleanPath);
+    return { success: true, duration };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('rust-audio-play', async () => {
+  if (!rustAudioPlayer) {
+    return { success: false, error: 'Rust audio player not initialized' };
+  }
+  try {
+    rustAudioPlayer.play();
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('rust-audio-pause', async () => {
+  if (!rustAudioPlayer) {
+    return { success: false, error: 'Rust audio player not initialized' };
+  }
+  try {
+    rustAudioPlayer.pause();
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('rust-audio-stop', async () => {
+  if (!rustAudioPlayer) {
+    return { success: false, error: 'Rust audio player not initialized' };
+  }
+  try {
+    rustAudioPlayer.stop();
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('rust-audio-set-volume', async (_, volume) => {
+  if (!rustAudioPlayer) {
+    return { success: false, error: 'Rust audio player not initialized' };
+  }
+  try {
+    rustAudioPlayer.setVolume(volume);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('rust-audio-get-duration', async () => {
+  if (!rustAudioPlayer) {
+    return { success: false, duration: 0 };
+  }
+  try {
+    const duration = rustAudioPlayer.getDuration();
+    return { success: true, duration };
+  } catch (e) {
+    return { success: false, duration: 0, error: e.message };
+  }
+});
+
+ipcMain.handle('rust-audio-get-position', async () => {
+  if (!rustAudioPlayer) {
+    return { success: false, position: 0 };
+  }
+  try {
+    const position = rustAudioPlayer.getPosition();
+    return { success: true, position };
+  } catch (e) {
+    return { success: false, position: 0, error: e.message };
+  }
+});
+
+ipcMain.handle('rust-audio-is-playing', async () => {
+  if (!rustAudioPlayer) {
+    return { success: false, isPlaying: false };
+  }
+  try {
+    const isPlaying = rustAudioPlayer.isPlaying();
+    return { success: true, isPlaying };
+  } catch (e) {
+    return { success: false, isPlaying: false, error: e.message };
+  }
+});
+
+ipcMain.handle('rust-audio-seek', async (_, seconds) => {
+  if (!rustAudioPlayer) {
+    return { success: false, error: 'Rust audio player not initialized' };
+  }
+  try {
+    // Ensure seconds is a number
+    const secs = Number(seconds) || 0;
+    rustAudioPlayer.seek(secs);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('rust-audio-get-waveform', async (_, filePath, buckets) => {
+  if (!getWaveformNative) {
+    return { success: false, error: 'Waveform generator not available' };
+  }
+  try {
+    let cleanPath = filePath;
+    if (cleanPath.startsWith('file://localhost/')) {
+      cleanPath = cleanPath.replace('file://localhost/', '/');
+    } else if (cleanPath.startsWith('file://')) {
+      cleanPath = cleanPath.replace('file://', '');
+    }
+    cleanPath = decodeURIComponent(cleanPath).replace(/\\/g, '/');
+
+    const wf = await getWaveformNative(cleanPath, buckets || 512);
+    return { success: true, waveform: wf };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
 ipcMain.handle('select-folder', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openDirectory'],
@@ -567,10 +737,33 @@ ipcMain.handle('scan-folder', async (_, folderPath) => {
             albumArt = `data:${picture.format};base64,${picture.data.toString('base64')}`;
           }
           
+          // Parse artist/title from filename if metadata is missing
+          const basename = path.basename(trackPath, path.extname(trackPath));
+          let trackName = metadata.common.title || basename;
+          let trackArtist = metadata.common.artist || '';
+          
+          // If artist is missing, try to parse from filename
+          if (!trackArtist) {
+            const parsed = parseArtistTitleFromFilename(basename);
+            if (parsed.artist) {
+              trackArtist = parsed.artist;
+            }
+            // Also use parsed title if metadata title is missing
+            if (!metadata.common.title && parsed.title) {
+              trackName = parsed.title;
+            }
+          }
+          
+          // NOTE: POPM rating reading is NOT YET IMPLEMENTED
+          // Ratings are written via QuickTag (audioTags:setRatingByte) but not read back when scanning.
+          // This means ratings persist in files but don't show up in UI until reading is implemented.
+          // See docs/POPM_RATING_SYSTEM.md for details.
+          // Future: Read POPM frames with email 'bonk@suh' from metadata.native['ID3v2.3']
+          
           const track = {
             TrackID: trackId,
-            Name: metadata.common.title || path.basename(trackPath, path.extname(trackPath)),
-            Artist: metadata.common.artist || 'Unknown Artist',
+            Name: trackName,
+            Artist: trackArtist || 'Unknown Artist',
             Album: metadata.common.album || '',
             Genre: metadata.common.genre ? metadata.common.genre.join(', ') : '',
             Year: metadata.common.year?.toString() || '',
@@ -598,6 +791,7 @@ ipcMain.handle('scan-folder', async (_, folderPath) => {
             ReleaseDate: metadata.common.date || '',
             // Parse custom tags from TXXX frames (ID3)
             tags: parseCustomTagsFromMetadata(metadata),
+            // ratingByte is NOT set here - reading POPM ratings is not yet implemented
           };
           
           result.tracks.push(track);
@@ -770,10 +964,27 @@ ipcMain.handle('scan-folder', async (_, folderPath) => {
               }
             }
             
+            // Parse artist/title from filename if metadata is missing
+            const basename = path.basename(trackPath, ext);
+            let trackName = tags.title || tags.TITLE || basename;
+            let trackArtist = tags.artist || tags.ARTIST || '';
+            
+            // If artist is missing, try to parse from filename
+            if (!trackArtist) {
+              const parsed = parseArtistTitleFromFilename(basename);
+              if (parsed.artist) {
+                trackArtist = parsed.artist;
+              }
+              // Also use parsed title if metadata title is missing
+              if (!tags.title && !tags.TITLE && parsed.title) {
+                trackName = parsed.title;
+              }
+            }
+            
             result.tracks.push({
               TrackID: trackId,
-              Name: tags.title || tags.TITLE || path.basename(trackPath, ext),
-              Artist: tags.artist || tags.ARTIST || 'Unknown Artist',
+              Name: trackName,
+              Artist: trackArtist || 'Unknown Artist',
               Album: tags.album || tags.ALBUM || '',
               Genre: tags.genre || tags.GENRE || '',
               Year: tags.date || tags.DATE || tags.year || tags.YEAR || '',
@@ -796,12 +1007,14 @@ ipcMain.handle('scan-folder', async (_, folderPath) => {
           }
           } catch (ffprobeError) {
             console.error('❌ FFprobe also failed:', ffprobeError.message);
-            // Last resort: filename only
+            // Last resort: filename only - try to parse artist/title from filename
             const trackId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+            const basename = path.basename(trackPath, path.extname(trackPath));
+            const parsed = parseArtistTitleFromFilename(basename);
             result.tracks.push({
               TrackID: trackId,
-              Name: path.basename(trackPath, path.extname(trackPath)),
-              Artist: 'Unknown Artist',
+              Name: parsed.title || basename,
+              Artist: parsed.artist || 'Unknown Artist',
               Album: '',
               Genre: '',
               Location: 'file://localhost' + trackPath,
@@ -896,10 +1109,32 @@ ipcMain.handle('reload-track', async (_, trackPath) => {
         albumArt = `data:${picture.format};base64,${picture.data.toString('base64')}`;
       }
       
+      // Parse artist/title from filename if metadata is missing
+      const basename = path.basename(filePath, ext);
+      let trackName = metadata.common.title || basename;
+      let trackArtist = metadata.common.artist || '';
+      
+      // If artist is missing, try to parse from filename
+      if (!trackArtist) {
+        const parsed = parseArtistTitleFromFilename(basename);
+        if (parsed.artist) {
+          trackArtist = parsed.artist;
+        }
+        // Also use parsed title if metadata title is missing
+        if (!metadata.common.title && parsed.title) {
+          trackName = parsed.title;
+        }
+      }
+      
+      // NOTE: POPM rating reading is NOT YET IMPLEMENTED
+      // Ratings written via QuickTag persist in files but are not read back here.
+      // See docs/POPM_RATING_SYSTEM.md for details.
+      // Future: Read POPM frames with email 'bonk@suh' from metadata.native['ID3v2.3']
+      
       // Return fresh metadata from file
       const freshTrack = {
-        Name: metadata.common.title || path.basename(filePath, ext),
-        Artist: metadata.common.artist || 'Unknown Artist',
+        Name: trackName,
+        Artist: trackArtist || 'Unknown Artist',
         Album: metadata.common.album || '',
         Genre: metadata.common.genre ? metadata.common.genre.join(', ') : '',
         Year: metadata.common.year?.toString() || '',
@@ -926,6 +1161,7 @@ ipcMain.handle('reload-track', async (_, trackPath) => {
         AlbumArt: albumArt,
         // Parse custom tags from TXXX frames (ID3)
         tags: parseCustomTagsFromMetadata(metadata),
+        // ratingByte is NOT set here - reading POPM ratings is not yet implemented
       };
       
       console.log('✓ Track reloaded from file');
@@ -2041,12 +2277,24 @@ ipcMain.handle('write-tags', async (_, tracks, settings) => {
 
           // Prepare metadata for FFmpeg
           const metadata = {};
+          const ext = path.extname(filePath);
+          const fileFormat = ext.toLowerCase();
+          const filenameBase = path.basename(filePath, ext);
+          const parsedFromFilename = parseArtistTitleFromFilename(filenameBase);
+          const parsedFromTitle = track?.Name ? parseArtistTitleFromFilename(track.Name) : { artist: '', title: '' };
+          const derivedArtist =
+            (track?.Artist && track.Artist !== 'Unknown Artist' ? track.Artist : '') ||
+            parsedFromFilename.artist ||
+            parsedFromTitle.artist ||
+            '';
           
           if (settings.writeTitle && track.Name) {
             metadata.title = track.Name;
           }
-          if (settings.writeArtist && track.Artist) {
-            metadata.artist = track.Artist;
+          // IMPORTANT: Many AIFFs have no embedded artist. If UI artist is empty,
+          // fall back to parsing "Artist - Title" from filename/title.
+          if (settings.writeArtist && derivedArtist) {
+            metadata.artist = derivedArtist;
           }
           if (settings.writeAlbum && track.Album) {
             metadata.album = track.Album;
@@ -2094,6 +2342,25 @@ ipcMain.handle('write-tags', async (_, tracks, settings) => {
             // FFmpeg uses 'title-3' or 'TIT3' for mix name/subtitle
             metadata['title-3'] = track.MixName;
           }
+          // Rating -> POPM (Popularimeter) for ID3v2.3
+          // NOTE: Rating writing is DISABLED here to prevent conflicts with QuickTag's POPM handler.
+          // QuickTag uses audioTags:setRatingByte which properly removes ALL POPM frames before writing.
+          // FFmpeg's popularimeter handling can create duplicate POPM frames or interfere with Rekordbox.
+          // If rating needs to be written, use the QuickTag system (audioTags:setRatingByte) instead.
+          // 
+          // IMPORTANT: If FFmpeg rating writing is ever re-enabled, it MUST use 'bonk@suh' as the email
+          // identifier to match QuickTag's POPM handler. Using a different email (like 'bonk@rating') would
+          // create multiple POPM frames, causing Rekordbox to potentially read the wrong rating source.
+          // 
+          // Legacy code (disabled - DO NOT RE-ENABLE without using 'bonk@suh'):
+          // if (settings.writeRating && track.Rating != null && track.Rating !== '') {
+          //   const raw = Number(track.Rating);
+          //   if (!Number.isNaN(raw) && raw >= 0 && raw <= 255) {
+          //     const email = 'bonk@suh';  // MUST match QuickTag's email identifier
+          //     const counter = 0;
+          //     metadata.popularimeter = `${email}|${raw}|${counter}`;
+          //   }
+          // }
 
           // Log metadata but truncate very large fields
           const logMetadata = {};
@@ -2135,7 +2402,6 @@ ipcMain.handle('write-tags', async (_, tracks, settings) => {
           }
 
           // Create temporary output file with proper extension
-          const ext = path.extname(filePath);
           const baseName = filePath.slice(0, -ext.length);
           const tempFile = `${baseName}_TEMP${ext}`;
           
@@ -2206,9 +2472,6 @@ ipcMain.handle('write-tags', async (_, tracks, settings) => {
             }
           }
 
-          // Get file format for format-specific handling
-          const fileFormat = ext.toLowerCase();
-          
           // Add format-specific flags
           if (fileFormat === '.mp3') {
             ffmpegArgs.push(
@@ -2827,12 +3090,17 @@ function parseArtistTitleFromFilename(basename) {
   // Remove common suffixes like (Explicit), [Remix], etc. for cleaner parsing
   const cleanBasename = basename.replace(/\s*[\(\[].*?[\)\]]\s*$/, '').trim();
   
+  // Helper to clean up artist/title (remove trailing commas, periods, etc.)
+  const cleanValue = (str) => {
+    return str.trim().replace(/[,;\.]+$/, '').trim();
+  };
+  
   // Pattern 1: "14. Artist - Title" (track number with period)
   const dotPattern = /^\d+\.\s*(.+?)\s*-\s*(.+)$/;
   const dotMatch = cleanBasename.match(dotPattern);
   if (dotMatch) {
-    artist = dotMatch[1].trim();
-    title = dotMatch[2].trim();
+    artist = cleanValue(dotMatch[1]);
+    title = cleanValue(dotMatch[2]);
     return { artist, title };
   }
   
@@ -2840,8 +3108,8 @@ function parseArtistTitleFromFilename(basename) {
   const dashPattern = /^\d+\s*-\s*(.+?)\s*-\s*(.+)$/;
   const dashMatch = cleanBasename.match(dashPattern);
   if (dashMatch) {
-    artist = dashMatch[1].trim();
-    title = dashMatch[2].trim();
+    artist = cleanValue(dashMatch[1]);
+    title = cleanValue(dashMatch[2]);
     return { artist, title };
   }
   
@@ -2849,8 +3117,8 @@ function parseArtistTitleFromFilename(basename) {
   const spaceNumPattern = /^\d+\s+(.+?)\s*-\s*(.+)$/;
   const spaceNumMatch = cleanBasename.match(spaceNumPattern);
   if (spaceNumMatch) {
-    artist = spaceNumMatch[1].trim();
-    title = spaceNumMatch[2].trim();
+    artist = cleanValue(spaceNumMatch[1]);
+    title = cleanValue(spaceNumMatch[2]);
     return { artist, title };
   }
   
@@ -2861,10 +3129,10 @@ function parseArtistTitleFromFilename(basename) {
     // Check if first part looks like a track number
     if (/^\d+$/.test(simpleMatch[1].trim())) {
       // "01 - Title" - no artist
-      title = simpleMatch[2].trim();
+      title = cleanValue(simpleMatch[2]);
     } else {
-      artist = simpleMatch[1].trim();
-      title = simpleMatch[2].trim();
+      artist = cleanValue(simpleMatch[1]);
+      title = cleanValue(simpleMatch[2]);
     }
     return { artist, title };
   }
@@ -3535,6 +3803,10 @@ ipcMain.handle('autotag:start', async (event, config) => {
       return { success: true, cancelled: true, results };
     }
     
+    // Helper: treat placeholder/garbage artist strings as "empty"
+    const isPlaceholderArtist = (value) =>
+      typeof value === 'string' && value.trim().toLowerCase() === 'unknown artist';
+
     // Read current metadata
     let currentMetadata = {};
     let trackName = path.basename(filePath);
@@ -3620,6 +3892,15 @@ ipcMain.handle('autotag:start', async (event, config) => {
       } catch (ffprobeError) {
         console.error(`❌ AutoTag: FFprobe also failed for ${path.basename(filePath)}:`, ffprobeError.message);
       }
+    }
+    
+    // Normalize placeholder artist values so they don't block real matches/overwrites
+    if (isPlaceholderArtist(currentMetadata.artist)) {
+      console.log('🔧 AutoTag: Treating placeholder artist "Unknown Artist" as empty');
+      currentMetadata.artist = '';
+    }
+    if (isPlaceholderArtist(trackArtist)) {
+      trackArtist = '';
     }
     
     // If artist is still empty, try to parse from filename as fallback
@@ -3885,9 +4166,21 @@ ipcMain.handle('autotag:start', async (event, config) => {
           // Open file - this reads ALL existing metadata including album art
           const tagFile = TagFile.createFromPath(filePath);
           
-          // Update ONLY the specified fields - existing metadata is preserved
-          if (updatedTags.includes('artist') && updatedMetadata.artist) {
-            tagFile.tag.performers = [updatedMetadata.artist];
+          // Derive a final artist value to write, even if it only came from filename
+          const filenameBaseForWrite = path.basename(filePath, path.extname(filePath));
+          const parsedFromFilenameForWrite = parseArtistTitleFromFilename(filenameBaseForWrite);
+          const finalArtist =
+            (updatedMetadata.artist && String(updatedMetadata.artist).trim()) ||
+            (currentMetadata.artist && String(currentMetadata.artist).trim()) ||
+            (parsedFromFilenameForWrite.artist && String(parsedFromFilenameForWrite.artist).trim()) ||
+            (trackArtist && String(trackArtist).trim()) ||
+            '';
+          
+          // Update ONLY the specified fields - existing metadata is preserved.
+          // For artist, as long as the user enabled the 'artist' tag in AutoTag,
+          // make sure we actually write whatever artist we ended up with.
+          if ((updatedTags.includes('artist') || tags.includes('artist')) && finalArtist) {
+            tagFile.tag.performers = [finalArtist];
           }
           if (updatedTags.includes('title') && updatedMetadata.title) {
             tagFile.tag.title = updatedMetadata.title;
@@ -4678,6 +4971,203 @@ ipcMain.handle('audiofeatures:detect-key', async (event, filePath) => {
     const key = await detectKey(filePath);
     return { success: true, key };
   } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// ============================================================================
+// QUICK TAG: Write POPM Rating (Popularimeter)
+// ============================================================================
+
+/**
+ * Writes Rekordbox-friendly rating to AIFF/MP3 via POPM using TagLib.
+ * Uses ID3v2.3 for maximum compatibility.
+ * Accepts ratingByte (0-255) directly - no conversion needed.
+ */
+ipcMain.handle('audioTags:setRating', async (event, filePath, ratingByte) => {
+  try {
+    // Normalize file path
+    let normalizedPath = filePath;
+    if (normalizedPath.startsWith('file://localhost/')) {
+      normalizedPath = normalizedPath.replace('file://localhost/', '/');
+    } else if (normalizedPath.startsWith('file://')) {
+      normalizedPath = normalizedPath.replace('file://', '');
+    }
+    normalizedPath = decodeURIComponent(normalizedPath);
+
+    // Check file exists
+    try {
+      await fs.access(normalizedPath);
+    } catch {
+      return { success: false, error: 'File not found' };
+    }
+
+    // Validate ratingByte (0-255)
+    const byte = typeof ratingByte === 'number' ? ratingByte : Number(ratingByte);
+    if (!Number.isFinite(byte) || byte < 0 || byte > 255) {
+      return { success: false, error: `Invalid ratingByte: ${ratingByte} (must be 0-255)` };
+    }
+    const POPM_EMAIL = 'bonk@suh';
+
+    // Use node-taglib-sharp to write POPM
+    const { File: TagFile, Id3v2Tag, Id3v2PopularimeterFrame, Id3v2Settings } = require('node-taglib-sharp');
+    
+    // Force ID3v2.3 for maximum compatibility (especially with Rekordbox)
+    Id3v2Settings.defaultVersion = 3;
+    Id3v2Settings.forceDefaultVersion = true;
+
+    const tagFile = TagFile.createFromPath(normalizedPath);
+    
+    // Get or create ID3v2 tag
+    let id3Tag = null;
+    if (tagFile.tag instanceof Id3v2Tag) {
+      id3Tag = tagFile.tag;
+    } else if (tagFile.tag.tags) {
+      id3Tag = tagFile.tag.tags.find(t => t instanceof Id3v2Tag);
+    } else {
+      // Create new ID3v2 tag if none exists
+      id3Tag = new Id3v2Tag();
+      if (tagFile.tag.tags) {
+        tagFile.tag.tags.push(id3Tag);
+      }
+    }
+
+    if (!id3Tag) {
+      tagFile.dispose();
+      return { success: false, error: 'Could not access or create ID3v2 tag' };
+    }
+
+    // Remove existing POPM frames with our email (to avoid duplicates)
+    const framesToRemove = [];
+    for (let i = 0; i < id3Tag.frames.length; i++) {
+      const frame = id3Tag.frames[i];
+      if (frame instanceof Id3v2PopularimeterFrame) {
+        try {
+          if (frame.user === POPM_EMAIL) {
+            framesToRemove.push(frame);
+          }
+        } catch (e) {
+          // Skip if we can't access user property
+        }
+      }
+    }
+    framesToRemove.forEach(frame => id3Tag.removeFrame(frame));
+
+    // Create new POPM frame with rating (only if rating > 0)
+    if (byte > 0) {
+      try {
+        const popmFrame = Id3v2PopularimeterFrame.fromUser(POPM_EMAIL);
+        popmFrame.rating = byte;
+        popmFrame.playCount = 0;
+        id3Tag.frames.push(popmFrame);
+      } catch (popmError) {
+        console.error('Failed to create POPM frame:', popmError.message);
+        tagFile.dispose();
+        return { success: false, error: `Failed to write POPM: ${popmError.message}` };
+      }
+    }
+
+    // Save changes
+    tagFile.save();
+    tagFile.dispose();
+
+    // Convert to stars for logging only
+    const stars = byte >= 255 ? 5 : (byte > 0 ? Math.round(byte / 51) : 0);
+    console.log(`✓ QuickTag: Wrote POPM rating (${stars} stars = ${byte} byte) to ${path.basename(normalizedPath)}`);
+
+    return { success: true, ratingByte: byte, stars };
+  } catch (e) {
+    console.error('❌ QuickTag: Failed to write POPM rating:', e.message);
+    return { success: false, error: e.message };
+  }
+});
+
+/**
+ * Writes Rekordbox-friendly rating to AIFF/MP3 via POPM using TagLib.
+ * Uses ID3v2.3 for maximum compatibility.
+ * Accepts ratingByte (0-255) directly - no stars conversion.
+ * Removes ALL POPM frames to prevent Rekordbox reading another rating source.
+ */
+ipcMain.handle('audioTags:setRatingByte', async (_, fileUrlOrPath, ratingByteRaw) => {
+  try {
+    // Clamp ratingByte to [0, 255]
+    const ratingByte = Math.max(0, Math.min(255, Number(ratingByteRaw) || 0));
+    console.log(`[QuickTag Electron] Received: ratingByteRaw=${ratingByteRaw}, clamped ratingByte=${ratingByte}`);
+
+    // Normalize file path (file://... or absolute)
+    let normalizedPath = fileUrlOrPath;
+    if (normalizedPath.startsWith('file://localhost/')) {
+      normalizedPath = normalizedPath.replace('file://localhost/', '/');
+    } else if (normalizedPath.startsWith('file://')) {
+      normalizedPath = normalizedPath.replace('file://', '');
+    }
+    normalizedPath = decodeURIComponent(normalizedPath);
+    console.log(`[QuickTag Electron] Normalized path: ${normalizedPath}`);
+
+    // Check file exists
+    try {
+      await fs.access(normalizedPath);
+    } catch {
+      return { success: false, error: 'File not found' };
+    }
+
+    // POPM email identifier - MUST be consistent across all rating writers
+    const POPM_EMAIL = 'bonk@suh';
+
+    // Use node-taglib-sharp to write POPM
+    const { File: TagFile, Id3v2PopularimeterFrame, Id3v2Settings, TagTypes } = require('node-taglib-sharp');
+    
+    // Force ID3v2.3 for maximum compatibility (especially with Rekordbox)
+    Id3v2Settings.defaultVersion = 3;
+    Id3v2Settings.forceDefaultVersion = true;
+
+    const tagFile = TagFile.createFromPath(normalizedPath);
+    
+    // Get or create ID3v2 tag (create=true means create if it doesn't exist)
+    const id3Tag = tagFile.getTag(TagTypes.Id3v2, true);
+
+    // Remove ALL POPM frames (including ones with empty emails) to prevent Rekordbox reading another rating source
+    // Use both frameId check AND instanceof check for maximum compatibility
+    const popmFramesBefore = id3Tag.frames.filter(f => 
+      f.frameId === 'POPM' || f instanceof Id3v2PopularimeterFrame
+    );
+    if (popmFramesBefore.length > 0) {
+      console.log(`[QuickTag Electron] Found ${popmFramesBefore.length} existing POPM frame(s) - removing all`);
+      popmFramesBefore.forEach(frame => {
+        try {
+          const email = frame.user || '(empty)';
+          const rating = frame.rating || 0;
+          console.log(`  - Removing POPM: email="${email}", rating=${rating}`);
+        } catch (e) {
+          console.log(`  - Removing POPM: (could not read properties)`);
+        }
+      });
+    }
+    // Remove frames that match EITHER condition (frameId is POPM OR it's a PopularimeterFrame instance)
+    id3Tag.frames = id3Tag.frames.filter(f => 
+      f.frameId !== 'POPM' && !(f instanceof Id3v2PopularimeterFrame)
+    );
+
+    // Create new POPM frame with rating (only if ratingByte > 0)
+    if (ratingByte > 0) {
+      const popm = Id3v2PopularimeterFrame.fromUser(POPM_EMAIL);
+      popm.rating = ratingByte;
+      popm.playCount = 0;
+      id3Tag.frames.push(popm);
+      console.log(`[QuickTag Electron] Writing POPM: rating=${popm.rating}, playCount=${popm.playCount}`);
+    } else {
+      console.log(`[QuickTag Electron] ratingByte is 0, skipping POPM frame creation`);
+    }
+
+    // Save changes
+    tagFile.save();
+    tagFile.dispose();
+
+    console.log(`✓ QuickTag: Wrote POPM rating (${ratingByte} byte) to ${path.basename(normalizedPath)}`);
+
+    return { success: true, ratingByte };
+  } catch (e) {
+    console.error('❌ QuickTag: Failed to write POPM rating:', e.message);
     return { success: false, error: e.message };
   }
 });

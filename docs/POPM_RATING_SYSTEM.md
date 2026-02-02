@@ -24,9 +24,9 @@ Bonk uses **POPM (Popularimeter)** frames in ID3v2.3 tags to store user ratings 
    - MUST use `'bonk@suh'` everywhere
    - Different emails create multiple POPM frames → Rekordbox confusion
 
-4. **DO NOT read POPM ratings yet** (not implemented)
-   - Reading is planned but not yet implemented
-   - Will use `music-metadata` when ready
+4. **DO NOT use different email identifiers when reading**
+   - MUST filter for `'bonk@suh'` only when reading POPM frames
+   - Other emails may exist but should be ignored
 
 ---
 
@@ -164,22 +164,27 @@ When modifying rating code, verify:
 
 ---
 
-## 🔮 Future: Reading Ratings
+## ✅ Reading Ratings
 
-**Status:** NOT YET IMPLEMENTED
+**Status:** IMPLEMENTED
 
-**Planned Implementation:**
-- Use `music-metadata` to read POPM frames
-- Filter for email `bonk@suh` only
-- Extract `ratingByte` and set in track state
-- Display stars using `popmByteToStars()`
+**Implementation:**
+- **Function:** `readBonkPopmRatingByte(filePath)` in `electron.js:71-102`
+- Uses `music-metadata` to read POPM frames from ID3v2.3/ID3v2.4 tags
+- Filters for email `bonk@suh` only
+- Extracts `ratingByte` (0-255) from matching POPM frame
+- Returns `undefined` if no matching frame found
 
-**Why Not Yet:**
-- Need to handle edge cases (multiple frames, missing frames, etc.)
-- Need thorough testing
-- Current system works for writing (ratings persist in files)
+**Integration:**
+- **Scan Directory:** `electron.js:757` - Reads ratings when scanning folders
+- **Reload Track:** `electron.js:1162` - Reads ratings when reloading track metadata
+- **FFprobe Fallback:** `electron.js:1016` - Attempts to read ratings even in FFprobe fallback path
+
+**Display:**
+- Frontend uses `popmByteToStars()` to convert byte to stars (0-5)
+- Displayed in QuickTag table using MUI Rating component
 
 ---
 
 **Last Updated:** 2025-01-28
-**Status:** Writing ✅ | Reading ❌ (not implemented)
+**Status:** Writing ✅ | Reading ✅ (implemented)

@@ -1,15 +1,28 @@
-# Rekordbox Database Integration Requirements
+# Bonk! - Python Dependencies
 # Install with: pip3 install -r requirements.txt
+#
+# Used by rekordbox_bridge.py for Rekordbox 6/7 database import/export.
+# pyrekordbox is bundled in pyrekordbox-0.4.4/ and loaded from there.
 
-# Note: pyrekordbox is included locally in pyrekordbox-0.4.4/
-# But you can also install from PyPI:
-# pyrekordbox>=0.4.4
-
-# SQLCipher support (required for Rekordbox 6/7 database encryption)
+# -----------------------------------------------------------------------------
+# SQLCipher (required for Rekordbox 6/7 encrypted master.db)
+# -----------------------------------------------------------------------------
 sqlcipher3>=0.5.0
 
-# Additional dependencies (usually auto-installed with pyrekordbox)
+# -----------------------------------------------------------------------------
+# pyrekordbox dependencies (bundled lib loads these at runtime)
+# See: pyrekordbox-0.4.4/pyproject.toml
+# -----------------------------------------------------------------------------
 construct>=2.10.0
+bidict>=0.21.0
+numpy>=1.19.0
+packaging
+psutil>=5.9.0
+sqlalchemy>=2.0.0
+python-dateutil
+
+# -----------------------------------------------------------------------------
+# Optional / additional (used by rekordbox_bridge for XML, crypto, etc.)
+# -----------------------------------------------------------------------------
 lxml>=4.9.0
 pycryptodome>=3.15.0
-

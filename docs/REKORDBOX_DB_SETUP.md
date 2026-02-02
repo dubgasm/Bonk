@@ -1,6 +1,6 @@
 # Rekordbox Database Integration Setup
 
-This guide will help you set up Bonk's Rekordbox 6/7 database import/export/sync features.
+This guide will help you set up Bonk's Rekordbox 6/7 database import/export features.
 
 ## Prerequisites
 
@@ -75,17 +75,6 @@ You should see JSON output with your Rekordbox configuration, or an error messag
    - **Overwrite**: Replace all data (use with caution!)
 4. Click **"Export to Database"**
 
-### 3. Two-Way Sync
-
-The sync feature intelligently merges changes between Bonk and Rekordbox:
-- Bonk changes take precedence in conflicts
-- Updates both databases simultaneously
-- Preserves data that hasn't changed
-
-1. Open Rekordbox DB Manager
-2. Click **"Sync with Database"**
-3. Review the sync summary
-
 ## Configuration
 
 ### Auto-Detection
@@ -126,7 +115,7 @@ To use a specific database file:
 
 ### ⚠️ Safety First
 
-**ALWAYS backup your Rekordbox library before syncing!**
+**ALWAYS backup your Rekordbox library before importing or exporting!**
 
 In Rekordbox: `File → Library → Backup Library`
 
@@ -135,7 +124,7 @@ In Rekordbox: `File → Library → Backup Library`
 - ✅ Import tracks and metadata
 - ✅ Import playlists and playlist folders
 - ✅ Update existing tracks
-- ✅ Merge changes between Bonk and Rekordbox
+- ✅ Merge new tracks and update existing ones on export
 - ⚠️ Adding new tracks (limited - use with caution)
 - ❌ Deleting tracks (not supported for safety)
 
@@ -143,7 +132,7 @@ In Rekordbox: `File → Library → Backup Library`
 
 1. **Analysis Data**: Waveforms, beatgrids, and cue points are read-only
 2. **Complex Relationships**: Some fields (artists, albums, genres) may not update properly if they reference other database tables
-3. **Rekordbox Must Be Closed**: Close Rekordbox before syncing to avoid database locks
+3. **Rekordbox Must Be Closed**: Close Rekordbox before exporting to avoid database locks
 
 ### Tested Rekordbox Versions
 

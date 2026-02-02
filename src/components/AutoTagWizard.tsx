@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -15,6 +15,7 @@ import {
   Settings,
   ListChecks,
   RefreshCw,
+  FolderOpen,
 } from 'lucide-react';
 import {
   DndContext,
@@ -149,6 +150,9 @@ export default function AutoTagWizard() {
   } = useAutoTagStore();
 
   const { apiCredentials, taggingPreferences } = useSettingsStore();
+
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; filePath: string } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   // DnD sensors
   const sensors = useSensors(
@@ -702,6 +706,12 @@ export default function AutoTagWizard() {
                       <div
                         key={i}
                         className={`result-row result-${result.status}`}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          if (result.trackPath && window.electronAPI?.showItemInFolder) {
+                            setContextMenu({ x: e.clientX, y: e.clientY, filePath: result.trackPath });
+                          }
+                        }}
                       >
                         <span className="result-status">
                           {result.status === 'success' && <Check size={14} />}
@@ -729,6 +739,39 @@ export default function AutoTagWizard() {
                     ))}
                   </div>
                 </div>
+
+                {contextMenu && (
+                  <>
+                    <div
+                      className="context-menu-overlay"
+                      style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+                      onClick={() => setContextMenu(null)}
+                      onContextMenu={(e) => e.preventDefault()}
+                      aria-hidden
+                    />
+                    <div
+                      ref={contextMenuRef}
+                      className="context-menu"
+                      style={{ left: contextMenu.x, top: contextMenu.y, zIndex: 9999 }}
+                    >
+                      <div className="context-menu-header">
+                        <span className="context-menu-title">File</span>
+                      </div>
+                      <div className="context-menu-separator" />
+                      <button
+                        type="button"
+                        className="context-menu-item"
+                        onClick={() => {
+                          window.electronAPI?.showItemInFolder?.(contextMenu.filePath);
+                          setContextMenu(null);
+                        }}
+                      >
+                        <FolderOpen size={16} />
+                        <span>Show in Finder</span>
+                      </button>
+                    </div>
+                  </>
+                )}
               </motion.div>
             )}
           </AnimatePresence>

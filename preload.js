@@ -8,26 +8,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   scanFolder: (folderPath) => ipcRenderer.invoke('scan-folder', folderPath),
   detectKey: (trackPath) => ipcRenderer.invoke('detect-key', trackPath),
-  findTags: (tracks, options) => ipcRenderer.invoke('find-tags', tracks, options),
   reloadTrack: (trackPath) => ipcRenderer.invoke('reload-track', trackPath),
-  onFindTagsProgress: (callback) => ipcRenderer.on('find-tags-progress', (_, data) => callback(data)),
-  onTrackMetadataUpdate: (callback) => ipcRenderer.on('track-metadata-update', (_, data) => callback(data)),
-  removeFindTagsListener: () => {
-    ipcRenderer.removeAllListeners('find-tags-progress');
-    ipcRenderer.removeAllListeners('track-metadata-update');
-  },
   // Rekordbox Database handlers
   rekordboxGetConfig: () => ipcRenderer.invoke('rekordbox-get-config'),
   rekordboxSetConfig: (installDir, appDir) => ipcRenderer.invoke('rekordbox-set-config', installDir, appDir),
   rekordboxImportDatabase: (dbPath) => ipcRenderer.invoke('rekordbox-import-database', dbPath),
   rekordboxBackupDatabase: (dbPath) => ipcRenderer.invoke('rekordbox-backup-database', dbPath),
   rekordboxExportDatabase: (library, dbPath, syncMode) => ipcRenderer.invoke('rekordbox-export-database', library, dbPath, syncMode),
-  rekordboxSyncDatabase: (library, dbPath) => ipcRenderer.invoke('rekordbox-sync-database', library, dbPath),
   rekordboxSelectDatabase: () => ipcRenderer.invoke('rekordbox-select-database'),
   rekordboxCreateSmartPlaylist: (name, conditions, logicalOperator, parent) => ipcRenderer.invoke('rekordbox-create-smart-playlist', name, conditions, logicalOperator, parent),
   rekordboxGetSmartPlaylistContents: (playlistId) => ipcRenderer.invoke('rekordbox-get-smart-playlist-contents', playlistId),
   applySmartFixes: (trackIds, fixes) => ipcRenderer.invoke('apply-smart-fixes', trackIds, fixes),
   checkFileExists: (filePath) => ipcRenderer.invoke('check-file-exists', filePath),
+  showItemInFolder: (filePath) => ipcRenderer.invoke('show-item-in-folder', filePath),
   searchMissingTracksInFolder: (folderPath, requests) => ipcRenderer.invoke('search-missing-tracks-in-folder', folderPath, requests),
   // Audio playback handler
   readAudioFile: (filePath) => ipcRenderer.invoke('read-audio-file', filePath),

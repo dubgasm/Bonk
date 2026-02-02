@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol, shell } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
 // node-id3 removed - using ffmetadata for universal tag writing
@@ -66,6 +66,40 @@ protocol.registerSchemesAsPrivileged([
     }
   }
 ]);
+
+// Helper function to read POPM rating byte from file using music-metadata
+async function readBonkPopmRatingByte(filePath) {
+  try {
+    // Ensure music-metadata is loaded
+    if (!mm) {
+      mm = await import('music-metadata');
+    }
+    
+    const metadata = await mm.parseFile(filePath, { duration: false, skipCovers: true }); // fast
+    const native = metadata.native;
+
+    const id3 = (native['ID3v2.4'] ?? native['ID3v2.3'] ?? []);
+
+    const popm = id3
+      .filter(t => t.id === 'POPM')
+      .map(t => t.value);
+
+    // Value shape may vary by parser version, so be defensive:
+    const bonk = popm.find(v => {
+      const email = v?.email ?? v?.user ?? v?.owner;
+      return email?.toLowerCase?.() === 'bonk@suh';
+    });
+
+    const ratingByte =
+      typeof bonk?.rating === 'number' ? bonk.rating :
+      typeof bonk?.ratingByte === 'number' ? bonk.ratingByte :
+      undefined;
+
+    return ratingByte;
+  } catch {
+    return undefined; // UI already handles undefined
+  }
+}
 
 // Helper function to parse custom tags from metadata (TXXX frames)
 function parseCustomTagsFromMetadata(metadata) {
@@ -207,54 +241,6 @@ async function getSpotifyToken(clientId, clientSecret) {
   }
 }
 
-// Search Spotify for track
-async function searchSpotify(artist, title, token) {
-  try {
-    const query = encodeURIComponent(`artist:${artist} track:${title}`);
-    const searchUrl = `https://api.spotify.com/v1/search?q=${query}&type=track&limit=1`;
-    
-    const searchResponse = await axios.get(searchUrl, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-
-    if (!searchResponse.data.tracks?.items?.length) {
-      return null;
-    }
-
-    const track = searchResponse.data.tracks.items[0];
-    const result = {
-      title: track.name,
-      artist: track.artists[0]?.name,
-      album: track.album?.name,
-      year: track.album?.release_date ? parseInt(track.album.release_date.substring(0, 4)) : null,
-      albumArt: track.album?.images?.[0]?.url,
-      popularity: track.popularity,
-    };
-
-    // Get audio features
-    try {
-      const featuresUrl = `https://api.spotify.com/v1/audio-features/${track.id}`;
-      const featuresResponse = await axios.get(featuresUrl, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      if (featuresResponse.data) {
-        result.energy = Math.round(featuresResponse.data.energy * 100);
-        result.danceability = Math.round(featuresResponse.data.danceability * 100);
-        result.happiness = Math.round(featuresResponse.data.valence * 100);
-        result.bpm = Math.round(featuresResponse.data.tempo);
-      }
-    } catch (e) {
-      console.log('Could not get audio features for track');
-    }
-
-    return result;
-  } catch (error) {
-    console.error('Spotify search error:', error.message);
-    return null;
-  }
-}
-
 // Dynamic import for ES module
 let mm;
 (async () => {
@@ -330,7 +316,36 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  // Stop Rust audio when window is closing or user reloads (Cmd+R) so playback doesn't continue
+  function stopRustAudioIfRunning() {
+    if (rustAudioPlayer) {
+      try {
+        rustAudioPlayer.stop();
+      } catch (e) {
+        console.warn('stopRustAudioIfRunning:', e?.message);
+      }
+    }
+  }
+
+  mainWindow.on('close', () => {
+    stopRustAudioIfRunning();
+  });
+
+  mainWindow.webContents.on('will-navigate', () => {
+    stopRustAudioIfRunning();
+  });
 }
+
+app.on('before-quit', () => {
+  if (rustAudioPlayer) {
+    try {
+      rustAudioPlayer.stop();
+    } catch (e) {
+      console.warn('before-quit stop audio:', e?.message);
+    }
+  }
+});
 
 app.whenReady().then(() => {
   // Register custom protocol for streaming local audio files
@@ -754,11 +769,8 @@ ipcMain.handle('scan-folder', async (_, folderPath) => {
             }
           }
           
-          // NOTE: POPM rating reading is NOT YET IMPLEMENTED
-          // Ratings are written via QuickTag (audioTags:setRatingByte) but not read back when scanning.
-          // This means ratings persist in files but don't show up in UI until reading is implemented.
-          // See docs/POPM_RATING_SYSTEM.md for details.
-          // Future: Read POPM frames with email 'bonk@suh' from metadata.native['ID3v2.3']
+          // Read POPM rating byte from file
+          const ratingByte = await readBonkPopmRatingByte(trackPath);
           
           const track = {
             TrackID: trackId,
@@ -791,7 +803,8 @@ ipcMain.handle('scan-folder', async (_, folderPath) => {
             ReleaseDate: metadata.common.date || '',
             // Parse custom tags from TXXX frames (ID3)
             tags: parseCustomTagsFromMetadata(metadata),
-            // ratingByte is NOT set here - reading POPM ratings is not yet implemented
+            // POPM rating byte (0-255) read from file
+            ratingByte: ratingByte,
           };
           
           result.tracks.push(track);
@@ -981,6 +994,14 @@ ipcMain.handle('scan-folder', async (_, folderPath) => {
               }
             }
             
+            // Try to read POPM rating from file (may fail if music-metadata can't parse)
+            let ratingByte;
+            try {
+              ratingByte = await readBonkPopmRatingByte(trackPath);
+            } catch {
+              ratingByte = undefined; // FFprobe fallback - rating reading may not work
+            }
+            
             result.tracks.push({
               TrackID: trackId,
               Name: trackName,
@@ -1000,6 +1021,8 @@ ipcMain.handle('scan-folder', async (_, folderPath) => {
               DateAdded: new Date().toISOString(),
               AlbumArt: albumArt,
               tags: customTags.length > 0 ? customTags : undefined,
+              // POPM rating byte (0-255) read from file
+              ratingByte: ratingByte,
             });
             
           if (process.env.NODE_ENV === 'development') {
@@ -1126,10 +1149,8 @@ ipcMain.handle('reload-track', async (_, trackPath) => {
         }
       }
       
-      // NOTE: POPM rating reading is NOT YET IMPLEMENTED
-      // Ratings written via QuickTag persist in files but are not read back here.
-      // See docs/POPM_RATING_SYSTEM.md for details.
-      // Future: Read POPM frames with email 'bonk@suh' from metadata.native['ID3v2.3']
+      // Read POPM rating byte from file
+      const ratingByte = await readBonkPopmRatingByte(filePath);
       
       // Return fresh metadata from file
       const freshTrack = {
@@ -1161,7 +1182,8 @@ ipcMain.handle('reload-track', async (_, trackPath) => {
         AlbumArt: albumArt,
         // Parse custom tags from TXXX frames (ID3)
         tags: parseCustomTagsFromMetadata(metadata),
-        // ratingByte is NOT set here - reading POPM ratings is not yet implemented
+        // POPM rating byte (0-255) read from file
+        ratingByte: ratingByte,
       };
       
       console.log('✓ Track reloaded from file');
@@ -1322,318 +1344,6 @@ async function realKeyDetection(filePath) {
     return null;
   }
 }
-
-ipcMain.handle('find-tags', async (event, tracks, options) => {
-  const results = {
-    success: true,
-    tracksUpdated: 0,
-    tracksSkipped: 0,
-    errors: []
-  };
-
-  // Get Spotify token if enabled
-  // Use credentials from options, or fallback to environment variables
-  const spotifyClientId = options.spotifyClientId || process.env.SPOTIFY_CLIENT_ID;
-  const spotifyClientSecret = options.spotifyClientSecret || process.env.SPOTIFY_CLIENT_SECRET;
-  
-  let spotifyAccessToken = null;
-  if (options.enableSpotify && spotifyClientId && spotifyClientSecret) {
-    spotifyAccessToken = await getSpotifyToken(spotifyClientId, spotifyClientSecret);
-    if (!spotifyAccessToken) {
-      console.log('⚠️ Spotify authentication failed - skipping Spotify searches');
-    } else {
-      const source = options.spotifyClientId ? 'settings' : '.env file';
-      console.log(`🔑 Using Spotify credentials from ${source}`);
-    }
-  }
-
-  for (const track of tracks) {
-    try {
-      // Check which fields are missing and need to be fetched
-      const fieldsToUpdate = {
-        needsYear: options.updateYear && !track.Year,
-        needsAlbum: options.updateAlbum && !track.Album,
-        needsLabel: options.updateLabel && !track.Label,
-        needsAlbumArt: options.updateAlbumArt && !track.AlbumArt,
-        needsGenre: options.updateGenre && !track.Genre,
-      };
-
-      // Check if track already has all requested metadata
-      const hasAllRequestedData = 
-        (!options.updateYear || track.Year) &&
-        (!options.updateAlbum || track.Album) &&
-        (!options.updateLabel || track.Label) &&
-        (!options.updateAlbumArt || track.AlbumArt) &&
-        (!options.updateGenre || track.Genre);
-
-      if (hasAllRequestedData) {
-        console.log(`✓ Skipping ${track.Name} - already has all requested metadata`);
-        event.sender.send('find-tags-progress', {
-          current: results.tracksUpdated + results.tracksSkipped + 1,
-          total: tracks.length,
-          currentTrack: track.Name,
-          status: 'skipped',
-          message: `${track.Name} - already complete`
-        });
-        results.tracksSkipped++;
-        continue;
-      }
-
-      // Build list of missing fields for logging
-      const missingFields = [];
-      if (fieldsToUpdate.needsYear) missingFields.push('Year');
-      if (fieldsToUpdate.needsAlbum) missingFields.push('Album');
-      if (fieldsToUpdate.needsLabel) missingFields.push('Label');
-      if (fieldsToUpdate.needsAlbumArt) missingFields.push('Album Art');
-      if (fieldsToUpdate.needsGenre) missingFields.push('Genre');
-
-      console.log(`🔍 Searching for missing fields: ${missingFields.join(', ')}`);
-
-      // Send progress update
-      event.sender.send('find-tags-progress', {
-        current: results.tracksUpdated + results.tracksSkipped + 1,
-        total: tracks.length,
-        currentTrack: track.Name,
-        status: 'searching',
-        message: `Searching for ${missingFields.join(', ')}...`
-      });
-
-      // Track what data we've found to avoid overwriting
-      const foundData = {
-        year: false,
-        album: false,
-        genre: false,
-        albumArt: false,
-        energy: false,
-        danceability: false,
-        happiness: false,
-        popularity: false
-      };
-      
-      let updatedData = {};
-
-      // Try Spotify first (if enabled and authenticated)
-      if (options.enableSpotify && spotifyAccessToken) {
-        try {
-          const spotifyResult = await searchSpotify(track.Artist, track.Name, spotifyAccessToken);
-          
-          if (spotifyResult) {
-            console.log(`✅ Spotify: Found "${track.Name}"`);
-            
-            if (options.updateGenre && spotifyResult.genre && !foundData.genre) {
-              updatedData.Genre = spotifyResult.genre;
-              foundData.genre = true;
-            }
-            if (options.updateYear && spotifyResult.year && !foundData.year) {
-              updatedData.Year = spotifyResult.year;
-              foundData.year = true;
-            }
-            if (options.updateAlbum && spotifyResult.album && !foundData.album) {
-              updatedData.Album = spotifyResult.album;
-              foundData.album = true;
-            }
-            if (options.updateEnergy && spotifyResult.energy) {
-              updatedData.Energy = spotifyResult.energy;
-              foundData.energy = true;
-            }
-            if (options.updateDanceability && spotifyResult.danceability) {
-              updatedData.Danceability = spotifyResult.danceability;
-              foundData.danceability = true;
-            }
-            if (options.updateHappiness && spotifyResult.happiness) {
-              updatedData.Happiness = spotifyResult.happiness;
-              foundData.happiness = true;
-            }
-            if (options.updatePopularity && spotifyResult.popularity) {
-              updatedData.Popularity = spotifyResult.popularity;
-              foundData.popularity = true;
-            }
-            
-            // Download album art if needed
-            if (options.updateAlbumArt && spotifyResult.albumArt && !foundData.albumArt) {
-              try {
-                event.sender.send('find-tags-progress', {
-                  current: results.tracksUpdated + results.tracksSkipped + 1,
-                  total: tracks.length,
-                  currentTrack: track.Name,
-                  status: 'downloading',
-                  message: 'Downloading album art from Spotify...'
-                });
-
-                const artResponse = await axios.get(spotifyResult.albumArt, {
-                  responseType: 'arraybuffer',
-                  timeout: 10000
-                });
-
-                if (artResponse.data) {
-                  const buffer = Buffer.from(artResponse.data);
-                  if (!sharp) {
-                    console.error('Sharp is not available, skipping optimization but keeping album art');
-                    updatedData.AlbumArt = `data:image/jpeg;base64,${buffer.toString('base64')}`;
-                    foundData.albumArt = true;
-                  } else {
-                    const optimizedImage = await sharp(buffer)
-                      .resize(500, 500, { fit: 'cover' })
-                      .jpeg({ quality: 90 })
-                      .toBuffer();
-                    updatedData.AlbumArt = `data:image/jpeg;base64,${optimizedImage.toString('base64')}`;
-                    foundData.albumArt = true;
-                  }
-                  console.log(`  ✓ Downloaded album art from Spotify`);
-                }
-              } catch (artError) {
-                console.error('Failed to download Spotify album art:', artError.message);
-              }
-            }
-          }
-        } catch (error) {
-          console.error('Spotify search error:', error);
-        }
-      }
-
-      // Search MusicBrainz (free API, no key needed)
-      if (options.enableMusicBrainz) {
-        try {
-          const query = encodeURIComponent(`artist:${track.Artist} recording:${track.Name}`);
-          const url = `https://musicbrainz.org/ws/2/recording/?query=${query}&fmt=json&limit=1`;
-          
-          const response = await axios.get(url, {
-            headers: {
-              'User-Agent': 'Bonk!/1.0.0 ( bonk@example.com )'
-            },
-            timeout: 5000
-          });
-
-          if (response.data.recordings && response.data.recordings.length > 0) {
-            const recording = response.data.recordings[0];
-            const release = recording.releases?.[0];
-            
-            // Only update fields that are missing and weren't already found by Spotify
-            if (fieldsToUpdate.needsYear && release?.date && !foundData.year) {
-              updatedData.Year = release.date.substring(0, 4);
-              foundData.year = true;
-              console.log(`  ✓ Found Year: ${updatedData.Year}`);
-            }
-            
-            if (fieldsToUpdate.needsAlbum && release?.title && !foundData.album) {
-              updatedData.Album = release.title;
-              foundData.album = true;
-              console.log(`  ✓ Found Album: ${updatedData.Album}`);
-            }
-            
-            if (fieldsToUpdate.needsLabel && release?.['label-info']?.[0]?.label?.name) {
-              updatedData.Label = release['label-info'][0].label.name;
-              console.log(`  ✓ Found Label: ${updatedData.Label}`);
-            }
-
-            // Download album art only if missing and not already found by Spotify
-            if (fieldsToUpdate.needsAlbumArt && release?.id && !foundData.albumArt) {
-              console.log(`  🎨 Downloading album art...`);
-              event.sender.send('find-tags-progress', {
-                current: results.tracksUpdated + results.tracksSkipped + 1,
-                total: tracks.length,
-                currentTrack: track.Name,
-                status: 'downloading',
-                message: 'Downloading album art...'
-              });
-
-              try {
-                const artUrl = `https://coverartarchive.org/release/${release.id}/front-500`;
-                const artResponse = await axios.get(artUrl, {
-                  responseType: 'arraybuffer',
-                  timeout: 10000
-                });
-
-                if (artResponse.data) {
-                  // Parse file location
-                  let filePath = track.Location;
-                  if (filePath.startsWith('file://localhost/')) {
-                    filePath = filePath.replace('file://localhost/', '/');
-                  } else if (filePath.startsWith('file://')) {
-                    filePath = filePath.replace('file://', '');
-                  }
-                  filePath = decodeURIComponent(filePath);
-
-                  event.sender.send('find-tags-progress', {
-                    current: results.tracksUpdated + results.tracksSkipped + 1,
-                    total: tracks.length,
-                    currentTrack: track.Name,
-                    status: 'embedding',
-                    message: 'Embedding album art...'
-                  });
-
-                  // Resize and optimize image, convert to base64 for in-memory storage
-                  try {
-                    const buffer = Buffer.from(artResponse.data);
-                    let processed = buffer;
-                    if (!sharp) {
-                      console.error('Sharp is not available, skipping optimization but keeping album art');
-                    } else {
-                      processed = await Promise.race([
-                        sharp(buffer)
-                          .resize(500, 500, { fit: 'cover' })
-                          .jpeg({ quality: 90 })
-                          .toBuffer(),
-                        new Promise((_, reject) => 
-                          setTimeout(() => reject(new Error('Image processing timeout')), 10000)
-                        )
-                      ]);
-                    }
-
-                    // Store as base64 for display in UI (not writing to file yet)
-                    updatedData.AlbumArt = `data:image/jpeg;base64,${processed.toString('base64')}`;
-                    foundData.albumArt = true;
-                    console.log(`  ✓ Downloaded and processed album art from MusicBrainz`);
-                  } catch (imgError) {
-                    console.error('Image processing failed:', imgError.message);
-                    // Continue without image
-                  }
-                }
-              } catch (artError) {
-                console.error('Failed to download/embed album art:', artError);
-              }
-            }
-          }
-        } catch (error) {
-          console.error('MusicBrainz search error:', error);
-        }
-      }
-
-      // If we have updates from any source, send them back to UI for in-memory update
-      // User can then use "Write Tags to Files" to persist changes
-      if (Object.keys(updatedData).length > 0) {
-        console.log(`  ✓ Found ${Object.keys(updatedData).length} metadata fields total`);
-        
-        // Send update to renderer to update in-memory track data
-        event.sender.send('track-metadata-update', {
-          trackId: track.TrackID,
-          updates: updatedData
-        });
-        
-        results.tracksUpdated++;
-      } else {
-        // If no results found, skip
-        results.tracksSkipped++;
-      }
-    } catch (error) {
-      results.errors.push({
-        track: track.Name,
-        error: error.message
-      });
-    }
-  }
-
-  // Send completion status
-  event.sender.send('find-tags-progress', {
-    current: tracks.length,
-    total: tracks.length,
-    currentTrack: '',
-    status: 'complete',
-    message: 'Complete!'
-  });
-
-  return results;
-});
 
 // Rekordbox Database Bridge IPC Handlers
 ipcMain.handle('rekordbox-get-config', async () => {
@@ -1859,44 +1569,6 @@ ipcMain.handle('rekordbox-export-database', async (_, library, dbPath, syncMode)
   }
 });
 
-ipcMain.handle('rekordbox-sync-database', async (_, library, dbPath) => {
-  try {
-    console.log('🔄 Syncing with Rekordbox database...');
-    const pythonPath = 'python3';
-    const bridgePath = getRekordboxBridgePath();
-    
-    // Write library to temp file
-    const tempFile = path.join(require('os').tmpdir(), `bonk_sync_${Date.now()}.json`);
-    await fs.writeFile(tempFile, JSON.stringify(library));
-    
-    const command = dbPath
-      ? `${pythonPath} "${bridgePath}" sync-database "@${tempFile}" "${dbPath}"`
-      : `${pythonPath} "${bridgePath}" sync-database "@${tempFile}"`;
-    
-    const { stdout, stderr } = await execAsync(command, {
-      maxBuffer: 50 * 1024 * 1024
-    });
-    
-    // Clean up temp file
-    await fs.unlink(tempFile);
-    
-    if (stderr) {
-      console.warn('Python stderr:', stderr);
-    }
-    
-    const result = JSON.parse(stdout);
-    console.log(`✓ Sync complete: ${result.updated_in_db} DB updates, ${result.updated_in_bonk} Bonk updates`);
-    
-    return result;
-  } catch (error) {
-    console.error('Rekordbox sync error:', error);
-    return { 
-      success: false, 
-      error: `Failed to sync with Rekordbox database: ${error.message}` 
-    };
-  }
-});
-
 ipcMain.handle('rekordbox-create-smart-playlist', async (_, name, conditions, logicalOperator, parent) => {
   try {
     console.log('🎵 Creating smart playlist...');
@@ -2057,6 +1729,21 @@ ipcMain.handle('check-file-exists', async (_, filePath) => {
     return true;
   } catch {
     return false;
+  }
+});
+
+// Reveal file in OS file manager (Finder on macOS, Explorer on Windows)
+ipcMain.handle('show-item-in-folder', async (_, filePath) => {
+  try {
+    if (!filePath || typeof filePath !== 'string') return;
+    let p = filePath.trim();
+    if (p.startsWith('file://localhost/')) p = p.replace('file://localhost/', process.platform === 'win32' ? '' : '/');
+    else if (p.startsWith('file://')) p = p.replace('file://', process.platform === 'win32' ? '' : '');
+    if (process.platform === 'win32' && p.startsWith('/') && p.length > 2 && p[2] === ':') p = p.slice(1);
+    await fs.access(p).catch(() => {});
+    shell.showItemInFolder(path.resolve(p));
+  } catch (e) {
+    console.warn('show-item-in-folder:', e.message);
   }
 });
 

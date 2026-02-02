@@ -80,7 +80,7 @@ export const defaultSettings: AppSettings = {
     writeKey: true,
     writeYear: true,
     writeComments: false,
-    writeRating: false,
+    writeRating: true,
     writeComposer: false,
     writeAlbumArtist: false,
     writeRemixer: false,

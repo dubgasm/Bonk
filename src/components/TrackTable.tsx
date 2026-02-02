@@ -3,7 +3,6 @@ import { useLibraryStore } from '../store/useLibraryStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useAutoTagStore } from '../store/useAutoTagStore';
 import TrackContextMenu from './TrackContextMenu';
-import FindTagsModal from './FindTagsModal';
 import TrackTableToolbar from './TrackTableToolbar';
 import TagsModal from './TagsModal';
 import TagSelectorModal from './TagSelectorModal';
@@ -17,7 +16,6 @@ import RemoveFromPlaylistModal from './RemoveFromPlaylistModal';
 import SmartFixesModal, { SmartFixConfig } from './SmartFixesModal';
 import DeleteTracksModal from './DeleteTracksModal';
 import AudioFeaturesWizard from './AudioFeaturesWizard';
-import { TagFinderOptions } from '../types/musicDatabase';
 import { Track } from '../types/track';
 const columnTemplate = '40px 60px 1.5fr 1.2fr 1.2fr 1fr 0.8fr 1fr 0.7fr 0.6fr';
 
@@ -46,7 +44,6 @@ export default function TrackTable() {
   const { openModal: openAutoTagWizard } = useAutoTagStore();
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; track?: typeof filteredTracks[0] } | null>(null);
-  const [showFindTagsModal, setShowFindTagsModal] = useState(false);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [showBatchRenameModal, setShowBatchRenameModal] = useState(false);
   const [showFormatConversionModal, setShowFormatConversionModal] = useState(false);
@@ -61,7 +58,6 @@ export default function TrackTable() {
   const [showDeleteTracksModal, setShowDeleteTracksModal] = useState(false);
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
   const [tagSelectorTrack, setTagSelectorTrack] = useState<Track | null>(null);
-  const [modalTrack, setModalTrack] = useState<typeof filteredTracks[0] | null>(null);
   const [editingCell, setEditingCell] = useState<{ trackId: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [isCheckingMissing, setIsCheckingMissing] = useState(false);
@@ -190,52 +186,6 @@ export default function TrackTable() {
     );
   }, [editingCell, editValue, handleCellBlur, handleCellKeyDown, handleCellDoubleClick]);
 
-  const { tagWriteSettings } = useSettingsStore();
-
-  const handleWriteTags = async (track?: typeof filteredTracks[0]) => {
-    // If a specific track is provided (right-click), use it; otherwise use selected tracks
-    const tracksToWrite = track 
-      ? [track] 
-      : Array.from(selectedTracks).map((id) => filteredTracks.find((t) => t.TrackID === id)).filter(Boolean);
-
-    if (tracksToWrite.length === 0) {
-      alert('No tracks to write');
-      return;
-    }
-
-    // Safety warning
-    const confirmed = window.confirm(
-      `⚠️ BACKUP WARNING\n\n` +
-      `You are about to write tags to ${tracksToWrite.length} audio file(s).\n\n` +
-      `This will permanently modify the files.\n` +
-      `Make sure you have BACKUPS before proceeding!\n\n` +
-      `Corrupted files will be automatically skipped.\n\n` +
-      `Continue?`
-    );
-    
-    if (!confirmed) {
-      return;
-    }
-
-    if (!window.electronAPI?.writeTags) {
-      alert('Write Tags feature not available');
-      return;
-    }
-
-    try {
-      const result = await window.electronAPI.writeTags(tracksToWrite, tagWriteSettings);
-      if (result.success) {
-        const message = `Successfully wrote tags to ${result.count} file(s)`;
-        const errorInfo = result.errors ? `\n\nErrors:\n${result.errors.join('\n')}` : '';
-        alert(message + errorInfo);
-      } else {
-        alert(`Error: ${result.error}`);
-      }
-    } catch (error: any) {
-      alert(`Error writing tags: ${error.message}`);
-    }
-  };
-
   const handleDetectKeys = async (track?: typeof filteredTracks[0]) => {
     // If a specific track is provided (right-click), use it; otherwise use selected tracks
     const tracksToAnalyze = track 
@@ -361,52 +311,6 @@ export default function TrackTable() {
     }
   };
 
-  const handleFindTags = async (options: TagFinderOptions, track?: typeof filteredTracks[0]) => {
-    // If a specific track is provided (right-click), use it; otherwise use selected tracks
-    const tracksToSearch = track 
-      ? [track] 
-      : Array.from(selectedTracks).map((id) => filteredTracks.find((t) => t.TrackID === id)).filter(Boolean);
-
-    if (tracksToSearch.length === 0) {
-      alert('No tracks to search');
-      return;
-    }
-
-    if (!window.electronAPI?.findTags) {
-      alert('Find Tags feature not available');
-      return;
-    }
-
-    try {
-      // Get credentials from settings store
-      const { apiCredentials } = useSettingsStore.getState();
-      
-      // Merge credentials into options
-      const optionsWithCredentials = {
-        ...options,
-        spotifyClientId: apiCredentials.spotifyClientId,
-        spotifyClientSecret: apiCredentials.spotifyClientSecret,
-      };
-      
-      const result = await window.electronAPI.findTags(tracksToSearch, optionsWithCredentials);
-      
-      if (result.success) {
-        const message = `Successfully updated ${result.tracksUpdated} of ${tracksToSearch.length} track(s)\nSkipped: ${result.tracksSkipped}`;
-        const errorInfo = result.errors && result.errors.length > 0 
-          ? `\n\nErrors:\n${result.errors.map((e: any) => `${e.track}: ${e.error}`).join('\n')}`
-          : '';
-        alert(message + errorInfo);
-        
-        // Refresh the library to show updated metadata
-        // In a real app, you'd reload the tracks from disk
-      } else {
-        alert('Failed to find tags');
-      }
-    } catch (error: any) {
-      alert(`Error finding tags: ${error.message}`);
-    }
-  };
-
   const handleDiscardChanges = async (track?: typeof filteredTracks[0]) => {
     // If a specific track is provided (right-click), use it; otherwise use selected tracks
     const tracksToReload = track 
@@ -485,7 +389,6 @@ export default function TrackTable() {
         e.preventDefault();
         clearSelection();
         setContextMenu(null);
-        setShowFindTagsModal(false);
       }
 
       // Only allow shortcuts if tracks are selected
@@ -497,18 +400,6 @@ export default function TrackTable() {
         handleDetectKeys();
       }
 
-      // Cmd/Ctrl+F - Find Tags
-      if (cmdOrCtrl && e.key === 'f') {
-        e.preventDefault();
-        setShowFindTagsModal(true);
-      }
-
-      // Cmd/Ctrl+W - Write Tags
-      if (cmdOrCtrl && e.key === 'w') {
-        e.preventDefault();
-        handleWriteTags();
-      }
-
       // Cmd/Ctrl+Z - Discard Changes
       if (cmdOrCtrl && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
@@ -518,7 +409,7 @@ export default function TrackTable() {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [selectedTracks, selectAll, clearSelection, handleDetectKeys, handleWriteTags, handleDiscardChanges]);
+  }, [selectedTracks, selectAll, clearSelection, handleDetectKeys, handleDiscardChanges]);
 
   // Removed debug logs for better performance
 
@@ -530,8 +421,6 @@ export default function TrackTable() {
         missingCount={filteredTracks.filter(t => t.isMissing).length}
         isCheckingMissing={isCheckingMissing}
         onDetectKeys={() => handleDetectKeys()}
-        onFindTags={() => setShowFindTagsModal(true)}
-        onWriteTags={() => handleWriteTags()}
         onDiscardChanges={() => handleDiscardChanges()}
         onSelectAll={selectAll}
         onClearSelection={clearSelection}
@@ -697,13 +586,7 @@ export default function TrackTable() {
           y={contextMenu.y}
           track={contextMenu.track}
           onClose={() => setContextMenu(null)}
-          onWriteTags={() => handleWriteTags(contextMenu.track)}
           onDetectKeys={() => handleDetectKeys(contextMenu.track)}
-          onFindTags={() => {
-            // Store the track before closing context menu
-            setModalTrack(contextMenu.track || null);
-            setShowFindTagsModal(true);
-          }}
           onDiscardChanges={() => handleDiscardChanges(contextMenu.track)}
           onSelectAll={selectAll}
           onClearSelection={clearSelection}
@@ -717,17 +600,6 @@ export default function TrackTable() {
             
             requestDeleteTracks(tracksToDelete);
           }}
-        />
-      )}
-
-      {showFindTagsModal && (
-        <FindTagsModal
-          onClose={() => {
-            setShowFindTagsModal(false);
-            setModalTrack(null);
-          }}
-          onStart={(options) => handleFindTags(options, modalTrack || undefined)}
-          trackCount={modalTrack ? 1 : selectedTracks.size}
         />
       )}
 

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
-import { FolderOpen, ArrowUp } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { FolderOpen, ArrowUp, Settings } from 'lucide-react';
+import QuickTagContextMenu from './QuickTagContextMenu';
 import { Track } from '../types/track';
 import QuickTagPlayer from './QuickTagPlayer';
 import ReactiveButton from 'reactive-button';
-import Rating from '@mui/material/Rating';
+import Rating from './ui/Rating';
 import { toast } from 'sonner';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { starsToPopmByte, popmByteToStars } from '../utils/popm';
@@ -127,10 +128,55 @@ export default function QuickTagScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [pendingSave, setPendingSave] = useState(false);
   const [autoPlayOnSelect, setAutoPlayOnSelect] = useState(false);
+  const [autoSaveRating, setAutoSaveRating] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [autosaveOnTrackSwitch, setAutosaveOnTrackSwitch] = useState(false);
+  const [startPlaybackAfterSeek, setStartPlaybackAfterSeek] = useState(false);
+  const [goToNextTrackOnEnd, setGoToNextTrackOnEnd] = useState(false);
   const saveToastIdRef = useRef<string | number | null>(null);
   const [activeEditTrackId, setActiveEditTrackId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; track: Track } | null>(null);
+  const [externalSeekTargetSeconds, setExternalSeekTargetSeconds] = useState<number | null>(null);
   const { tagWriteSettings } = useSettingsStore();
 
+  // Clear seek target when track changes (e.g. after loading a folder) so we don't apply old position to new track
+  useEffect(() => {
+    setExternalSeekTargetSeconds(null);
+  }, [selectedTrack?.TrackID]);
+
+  // Save rating to file — must be defined before any callback that uses it (handleSelectTrack, useEffect, Rating onChange)
+  const saveRatingToFile = useCallback(async (track: Track, ratingByte: number) => {
+    if (!track?.Location) return;
+    if (pendingSave) return;
+    if (!window.electronAPI?.audioTagsSetRatingByte) {
+      toast.error('Save failed', { description: 'Rating writer not available', duration: 3000 });
+      return;
+    }
+    if (!ratingByte || ratingByte <= 0) {
+      toast.error('No rating to save', { description: 'Rating is 0 or not set', duration: 3000 });
+      return;
+    }
+    setPendingSave(true);
+    if (saveToastIdRef.current !== null) toast.dismiss(saveToastIdRef.current);
+    const toastId = toast.loading('Saving...', { description: 'Writing rating to file', duration: Infinity });
+    saveToastIdRef.current = toastId;
+    try {
+      const result = await window.electronAPI.audioTagsSetRatingByte(track.Location, ratingByte);
+      setPendingSave(false);
+      saveToastIdRef.current = null;
+      if (result.success) {
+        const stars = popmByteToStars(ratingByte);
+        toast.success('Saved', { id: toastId, description: `Rating (${stars}★) written to file`, duration: 3000 });
+        setActiveEditTrackId(null);
+      } else {
+        toast.error('Save failed', { id: toastId, description: result.error || 'Failed to write rating', duration: 5000 });
+      }
+    } catch (error: any) {
+      setPendingSave(false);
+      saveToastIdRef.current = null;
+      toast.error('Save failed', { id: toastId, description: error.message || 'Error writing rating', duration: 5000 });
+    }
+  }, [pendingSave]);
 
   const loadFolder = async (folder: string, options: { autoSelectFolder?: boolean; skipScan?: boolean } = {}) => {
     const { autoSelectFolder = true, skipScan = false } = options;
@@ -233,6 +279,20 @@ export default function QuickTagScreen() {
     });
   }, [allScannedTracks, tracks, selectedFolderPath, searchQuery]);
 
+  // When switching track: optionally autosave the previous track's rating
+  const handleSelectTrack = useCallback(
+    (newTrack: Track) => {
+      if (autosaveOnTrackSwitch && selectedTrack && activeEditTrackId === selectedTrack.TrackID) {
+        const ratingByte = selectedTrack.ratingByte ?? 0;
+        if (ratingByte > 0 && selectedTrack.Location) {
+          saveRatingToFile(selectedTrack, ratingByte);
+        }
+      }
+      setSelectedTrack(newTrack);
+    },
+    [autosaveOnTrackSwitch, selectedTrack, activeEditTrackId, saveRatingToFile]
+  );
+
   const updateRatingForTrack = (trackId: string, ratingByte: number) => {
     // Store ratingByte as number (0-255), not string
     const byte = ratingByte > 0 ? ratingByte : undefined;
@@ -246,7 +306,7 @@ export default function QuickTagScreen() {
     setActiveEditTrackId(trackId);
   };
 
-  // Helper: select next/previous track in the visible list
+  // Helper: select next/previous track in the visible list (respects autosave on switch)
   const selectTrackByOffset = (offset: number) => {
     if (!visibleTracks.length) return;
     let currentIndex = selectedTrack
@@ -261,7 +321,7 @@ export default function QuickTagScreen() {
     );
     const nextTrack = visibleTracks[nextIndex];
     if (nextTrack) {
-      setSelectedTrack(nextTrack);
+      handleSelectTrack(nextTrack);
     }
   };
 
@@ -311,9 +371,10 @@ export default function QuickTagScreen() {
             durRes && typeof durRes === 'object'
               ? Number((durRes as any).duration ?? 0)
               : Number(durRes ?? 0);
-          const delta = e.key === 'ArrowLeft' ? -10 : 30;
+          const delta = e.key === 'ArrowLeft' ? -10 : 10;
           const target = Math.max(0, Math.min(dur || 0, pos + delta));
           await api.rustAudioSeek?.(target);
+          setExternalSeekTargetSeconds(target);
         } catch (err) {
           console.error('QuickTagScreen arrow seek error:', err);
         }
@@ -346,127 +407,34 @@ export default function QuickTagScreen() {
         return;
       }
 
-      // Save: Shift+S => save directly
+      // Save: Shift+S => save directly (when auto-save is off)
       if (e.key.toLowerCase() === 's' && e.shiftKey) {
         e.preventDefault();
-        
-        // Prevent multiple simultaneous saves
-        if (pendingSave) {
-          return;
-        }
+        if (pendingSave) return;
 
-        // Only save the track that was edited
         const trackToSave = activeEditTrackId
           ? visibleTracks.find((t) => t.TrackID === activeEditTrackId && t.Location)
           : null;
 
         if (!trackToSave) {
           toast.error('No track to save', {
-            description: activeEditTrackId 
-              ? 'Edited track not found or missing file location' 
+            description: activeEditTrackId
+              ? 'Edited track not found or missing file location'
               : 'Change a rating first, then press Shift+S',
             duration: 3000,
           });
           return;
         }
 
-        setPendingSave(true);
-        
-        // Dismiss any existing toast
-        if (saveToastIdRef.current !== null) {
-          toast.dismiss(saveToastIdRef.current);
-        }
-        
-        // Show loading toast immediately
-        const toastId = toast.loading('Saving...', {
-          description: `Writing tags to file`,
-          duration: Infinity,
-        });
-        saveToastIdRef.current = toastId;
-
-        // Write POPM rating to file using TagLib
-        const handleSave = async () => {
-          if (!window.electronAPI?.audioTagsSetRatingByte) {
-            setPendingSave(false);
-            if (saveToastIdRef.current !== null) {
-              toast.error('Save failed', {
-                id: saveToastIdRef.current,
-                description: 'Rating writer not available',
-                duration: 3000,
-              });
-              saveToastIdRef.current = null;
-            }
-            return;
-          }
-
-          // Get ratingByte directly (single source of truth)
-          const ratingByte = trackToSave.ratingByte ?? 0;
-          console.log(`[QuickTag Renderer] handleSave: ratingByte=${ratingByte}, filePath=${trackToSave.Location}`);
-          
-          if (!ratingByte || ratingByte <= 0) {
-            setPendingSave(false);
-            if (saveToastIdRef.current !== null) {
-              toast.error('No rating to save', {
-                id: saveToastIdRef.current,
-                description: 'Rating is 0 or not set',
-                duration: 3000,
-              });
-              saveToastIdRef.current = null;
-            }
-            return;
-          }
-
-          try {
-            // Send ratingByte directly to Electron (no conversion - single source of truth)
-            const result = await window.electronAPI.audioTagsSetRatingByte(trackToSave.Location, ratingByte);
-            
-            setPendingSave(false);
-            
-            if (result.success) {
-              // Convert to stars for user-friendly toast message
-              const stars = popmByteToStars(ratingByte);
-              if (saveToastIdRef.current !== null) {
-                toast.success('Saved', {
-                  id: saveToastIdRef.current,
-                  description: `Rating (${stars}★) written to file`,
-                  duration: 3000,
-                });
-                saveToastIdRef.current = null;
-              }
-
-              // Clear active edit after successful save
-              setActiveEditTrackId(null);
-            } else {
-              if (saveToastIdRef.current !== null) {
-                toast.error('Save failed', {
-                  id: saveToastIdRef.current,
-                  description: result.error || 'Failed to write rating',
-                  duration: 5000,
-                });
-                saveToastIdRef.current = null;
-              }
-            }
-          } catch (error: any) {
-            setPendingSave(false);
-            if (saveToastIdRef.current !== null) {
-              toast.error('Save failed', {
-                id: saveToastIdRef.current,
-                description: error.message || 'Error writing rating',
-                duration: 5000,
-              });
-              saveToastIdRef.current = null;
-            }
-          }
-        };
-
-        handleSave();
+        const ratingByte = trackToSave.ratingByte ?? 0;
+        saveRatingToFile(trackToSave, ratingByte);
         return;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [visibleTracks, selectedTrack, pendingSave, autoPlayOnSelect, activeEditTrackId, tagWriteSettings]);
+  }, [visibleTracks, selectedTrack, pendingSave, autoPlayOnSelect, activeEditTrackId, tagWriteSettings, saveRatingToFile]);
 
   return (
     <div className="quicktag-layout">
@@ -494,6 +462,25 @@ export default function QuickTagScreen() {
               size="small"
             />
           </div>
+          <div style={{ marginLeft: '8px' }} title="When on, changing the star rating saves to file immediately (no Shift+S needed)">
+            <ReactiveButton
+              buttonState="idle"
+              color={autoSaveRating ? 'green' : 'red'}
+              idleText={autoSaveRating ? 'Auto-save rating ON' : 'Auto-save rating OFF'}
+              onClick={() => setAutoSaveRating((v) => !v)}
+              rounded
+              size="small"
+            />
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary quicktag-settings-btn"
+            onClick={() => setSettingsOpen(true)}
+            title="Quick Tag settings"
+          >
+            <Settings size={18} />
+            Settings
+          </button>
 
           {folderPath && (
             <div className="quicktag-path-search">
@@ -560,13 +547,28 @@ export default function QuickTagScreen() {
                   </div>
                   <div className="quicktag-track-table-body">
                     {visibleTracks.map((track) => (
-                      <button
+                      <div
                         key={track.TrackID}
                         className={
                           'quicktag-track-row' +
                           (selectedTrack?.TrackID === track.TrackID ? ' quicktag-track-row-active' : '')
                         }
-                        onClick={() => setSelectedTrack(track)}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handleSelectTrack(track)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            handleSelectTrack(track);
+                          }
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (track?.Location && window.electronAPI?.showItemInFolder) {
+                            setContextMenu({ x: e.clientX, y: e.clientY, track });
+                          }
+                        }}
                       >
                         <div className="qt-col-artwork">
                           <div className="qt-artwork">
@@ -594,10 +596,13 @@ export default function QuickTagScreen() {
                             size="small"
                             max={5}
                             value={popmByteToStars(track.ratingByte ?? (track.Rating ? Number(track.Rating) : 0))}
-                            onChange={(_, newStars) => {
+                            onChange={(newStars) => {
                               const ratingByte = starsToPopmByte(newStars);
                               console.log(`[QuickTag Renderer] User clicked stars: newStars=${newStars}, ratingByte=${ratingByte}`);
                               updateRatingForTrack(track.TrackID, ratingByte);
+                              if (autoSaveRating && ratingByte > 0) {
+                                saveRatingToFile(track, ratingByte);
+                              }
                             }}
                             precision={1}
                           />
@@ -605,7 +610,7 @@ export default function QuickTagScreen() {
                         <div className="qt-col-key">
                           <span className="quicktag-track-key">{track.Key || ''}</span>
                         </div>
-                      </button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -613,13 +618,88 @@ export default function QuickTagScreen() {
             </div>
           </div>
 
+          {contextMenu && (
+            <QuickTagContextMenu
+              x={contextMenu.x}
+              y={contextMenu.y}
+              track={contextMenu.track}
+              onClose={() => setContextMenu(null)}
+              onShowInFinder={() => {
+                if (contextMenu.track?.Location) window.electronAPI?.showItemInFolder?.(contextMenu.track.Location);
+                setContextMenu(null);
+              }}
+            />
+          )}
+
           {/* Right: reserved space for later */}
           <div className="quicktag-right-panel" />
         </div>
       </div>
 
+      {/* Quick Tag settings modal */}
+      {settingsOpen && (
+        <div
+          className="quicktag-settings-overlay"
+          onClick={() => setSettingsOpen(false)}
+          onKeyDown={(e) => e.key === 'Escape' && setSettingsOpen(false)}
+          role="dialog"
+          aria-label="Quick Tag settings"
+        >
+          <div className="quicktag-settings-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="quicktag-settings-header">
+              <h3>Quick Tag settings</h3>
+              <button type="button" className="quicktag-settings-close" onClick={() => setSettingsOpen(false)}>
+                ×
+              </button>
+            </div>
+            <div className="quicktag-settings-body">
+              <label className="quicktag-settings-row">
+                <input
+                  type="checkbox"
+                  checked={autosaveOnTrackSwitch}
+                  onChange={(e) => setAutosaveOnTrackSwitch(e.target.checked)}
+                />
+                <span>Autosave changes when switching to a different track</span>
+              </label>
+              <label className="quicktag-settings-row">
+                <input
+                  type="checkbox"
+                  checked={autoPlayOnSelect}
+                  onChange={(e) => setAutoPlayOnSelect(e.target.checked)}
+                />
+                <span>Continue playback when switching to a different track</span>
+              </label>
+              <label className="quicktag-settings-row">
+                <input
+                  type="checkbox"
+                  checked={startPlaybackAfterSeek}
+                  onChange={(e) => setStartPlaybackAfterSeek(e.target.checked)}
+                />
+                <span>Start/continue playback after seeking</span>
+              </label>
+              <label className="quicktag-settings-row">
+                <input
+                  type="checkbox"
+                  checked={goToNextTrackOnEnd}
+                  onChange={(e) => setGoToNextTrackOnEnd(e.target.checked)}
+                />
+                <span>Go to next track when playback ends</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectedTrack && (
-        <QuickTagPlayer track={selectedTrack} onChooseFolder={handleChooseFolder} autoPlay={autoPlayOnSelect} />
+        <QuickTagPlayer
+          track={selectedTrack}
+          onChooseFolder={handleChooseFolder}
+          autoPlay={autoPlayOnSelect}
+          startPlaybackAfterSeek={startPlaybackAfterSeek}
+          onPlaybackEnded={goToNextTrackOnEnd ? () => selectTrackByOffset(1) : undefined}
+          externalSeekTargetSeconds={externalSeekTargetSeconds}
+          onExternalSeekConsumed={() => setExternalSeekTargetSeconds(null)}
+        />
       )}
     </div>
   );

@@ -10,13 +10,12 @@ import SearchBar from './components/SearchBar';
 import ExportModal from './components/ExportModal';
 import SettingsModal from './components/SettingsModal';
 import RekordboxDBModal from './components/RekordboxDBModal';
-import TagsManagementSuite from './components/TagsManagementSuite';
 import GenreManagementSuite from './components/GenreManagementSuite';
 import PlaylistSidebar from './components/PlaylistSidebar';
 import AutoTagWizard from './components/AutoTagWizard';
 import AudioFeaturesWizard from './components/AudioFeaturesWizard';
 import QuickTagScreen from './components/QuickTagScreen';
-import { FolderOpen, Tag, Music, Database, Archive, FileText, Sparkles, Activity } from 'lucide-react';
+import { Tag, Music, Database, Archive, Sparkles, Activity, FolderOpen } from 'lucide-react';
 import { Track } from './types/track';
 import { Toaster } from 'sonner';
 import './styles/App.css';
@@ -31,16 +30,11 @@ declare global {
       selectFolder: () => Promise<string | null>;
       scanFolder: (folderPath: string) => Promise<{ success: boolean; library?: any; error?: string }>;
       detectKey: (trackPath: string) => Promise<{ success: boolean; key?: string; confidence?: number; method?: string; error?: string }>;
-      findTags: (tracks: any[], options: any) => Promise<{ success: boolean; tracksUpdated: number; tracksSkipped: number; errors: any[] }>;
       reloadTrack: (trackPath: string) => Promise<any>;
-      onFindTagsProgress?: (callback: (data: any) => void) => void;
-      onTrackMetadataUpdate?: (callback: (data: { trackId: string; updates: any }) => void) => void;
-      removeFindTagsListener?: () => void;
       rekordboxGetConfig?: () => Promise<{ success: boolean; config?: any; error?: string }>;
       rekordboxSetConfig?: (installDir: string, appDir: string) => Promise<{ success: boolean; error?: string }>;
       rekordboxImportDatabase?: (dbPath?: string) => Promise<{ success: boolean; library?: any; trackCount?: number; playlistCount?: number; error?: string }>;
       rekordboxExportDatabase?: (library: any, dbPath?: string, syncMode?: string) => Promise<{ success: boolean; added?: number; updated?: number; skipped?: number; errors?: string[]; error?: string }>;
-      rekordboxSyncDatabase?: (library: any, dbPath?: string) => Promise<{ success: boolean; updated_in_db?: number; updated_in_bonk?: number; conflicts?: any[]; tracks?: any[]; error?: string }>;
       rekordboxSelectDatabase?: () => Promise<string | null>;
       rekordboxCreateSmartPlaylist?: (name: string, conditions: any[], logicalOperator?: number, parent?: any) => Promise<{ success: boolean; error?: string }>;
       rekordboxGetSmartPlaylistContents?: (playlistId: string) => Promise<any>;
@@ -85,6 +79,7 @@ declare global {
       onAudioFeaturesEvent?: (callback: (data: any) => void) => void;
       onAudioFeaturesResult?: (callback: (data: any) => void) => void;
       removeAudioFeaturesListeners?: () => void;
+      showItemInFolder?: (filePath: string) => Promise<void>;
     };
   }
 }
@@ -95,7 +90,6 @@ function App() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showRekordboxDBModal, setShowRekordboxDBModal] = useState(false);
-  const [showTagsManagementSuite, setShowTagsManagementSuite] = useState(false);
   const [showGenreManagementSuite, setShowGenreManagementSuite] = useState(false);
   const [showAudioFeaturesWizard, setShowAudioFeaturesWizard] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -245,35 +239,6 @@ function App() {
     } catch (err: any) {
       setError(err.message || 'Failed to import from selected Rekordbox database');
     } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleImport = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      if (!window.electronAPI) {
-        throw new Error('Electron API not available. Please run the app with: npm run dev');
-      }
-
-      const filePath = await window.electronAPI.selectFile();
-      if (!filePath) {
-        setLoading(false);
-        return;
-      }
-
-      const result = await window.electronAPI.readFile(filePath);
-      if (!result.success || !result.content) {
-        throw new Error(result.error || 'Failed to read file');
-      }
-
-      const parsedLibrary = parser.parseXML(result.content);
-      setLibrary(parsedLibrary);
-      setLoading(false);
-    } catch (err: any) {
-      setError(err.message);
       setLoading(false);
     }
   };
@@ -572,8 +537,6 @@ function App() {
       onDrop={handleDrop}
     >
       <Header
-        onImport={handleImport}
-        onImportFolder={handleImportFolder}
         onExport={handleOpenExportModal}
         onSettings={() => setShowSettingsModal(true)}
         onDatabase={() => setShowRekordboxDBModal(true)}
@@ -592,16 +555,16 @@ function App() {
 
       {mode === 'library' && !library && !loading && (
         <div className="welcome">
-          <div className="welcome-content">
-            <div className="welcome-hero">
-              <h1>Bonk!</h1>
-              <p className="welcome-tagline">Music metadata editor for Rekordbox</p>
-            </div>
+          <div className="welcome-hero">
+            <h1>Bonk!</h1>
+            <p className="welcome-tagline">Music metadata editor for Rekordbox</p>
+          </div>
 
-            <div className="welcome-actions">
+          <div className="welcome-two-sections">
+            <section className="welcome-section welcome-section-rekordbox">
+              <h2 className="welcome-section-title">Rekordbox management</h2>
               <div className="welcome-card welcome-card-primary">
-                <h2>Rekordbox Database</h2>
-                <p>Quickly import from your Rekordbox master.db, or choose a custom database path.</p>
+                <p>Import from your Rekordbox master.db or choose a custom database path.</p>
                 <div className="welcome-card-buttons">
                   <button className="import-btn-large" onClick={handleQuickRekordboxImport} disabled={loading}>
                     <Database size={22} />
@@ -617,48 +580,56 @@ function App() {
                   </button>
                 </div>
               </div>
+              <button className="welcome-btn-secondary welcome-section-extra" onClick={() => setShowRekordboxDBModal(true)} disabled={loading}>
+                <Database size={18} />
+                Rekordbox DB manager
+              </button>
+            </section>
 
-              <div className="welcome-card">
-                <h2>Other import options</h2>
+            <section className="welcome-section welcome-section-tags">
+              <h2 className="welcome-section-title">Tags &amp; Music management</h2>
+              <div className="welcome-card welcome-card-tag">
+                <p>Import a folder to get started, or use Quick Tag / Auto Tag.</p>
                 <div className="welcome-card-buttons welcome-card-buttons-row">
-                  <button className="welcome-btn-secondary" onClick={handleImport}>
-                    <FileText size={20} />
-                    <span>Import XML</span>
-                  </button>
-                  <button className="welcome-btn-secondary" onClick={handleImportFolder}>
-                    <FolderOpen size={20} />
+                  <button
+                    className="import-btn-large import-btn-folder"
+                    onClick={handleImportFolder}
+                    disabled={loading}
+                    type="button"
+                  >
+                    <FolderOpen size={22} />
                     <span>Import Folder</span>
+                  </button>
+                  <button className="welcome-btn-secondary" onClick={() => setMode('quickTag')}>
+                    <Tag size={20} />
+                    <span>Quick Tag</span>
+                  </button>
+                  <button className="welcome-btn-secondary" onClick={() => openAutoTagWizard()} disabled={loading}>
+                    <Sparkles size={20} />
+                    <span>Auto Tag</span>
                   </button>
                 </div>
               </div>
-
-              <div className="welcome-utilities">
-                <button className="welcome-link" onClick={() => openAutoTagWizard()}>
-                  <Sparkles size={16} />
-                  Auto Tag
-                </button>
-                <span className="welcome-util-sep">·</span>
-                <button className="welcome-link" onClick={() => setShowAudioFeaturesWizard(true)}>
-                  <Activity size={16} />
-                  Audio Features
-                </button>
-                <span className="welcome-util-sep">·</span>
-                <button className="welcome-link" onClick={() => setShowTagsManagementSuite(true)}>
-                  <Tag size={16} />
-                  Manage Tags
-                </button>
-                <span className="welcome-util-sep">·</span>
-                <button className="welcome-link" onClick={() => setShowGenreManagementSuite(true)}>
-                  <Music size={16} />
-                  Manage Genres
-                </button>
+              <div className="welcome-card">
+                <p>Audio features and genres.</p>
+                <div className="welcome-utilities welcome-utilities-inline">
+                  <button className="welcome-link" onClick={() => setShowAudioFeaturesWizard(true)}>
+                    <Activity size={16} />
+                    Audio Features
+                  </button>
+                  <span className="welcome-util-sep">·</span>
+                  <button className="welcome-link" onClick={() => setShowGenreManagementSuite(true)}>
+                    <Music size={16} />
+                    Manage Genres
+                  </button>
+                </div>
               </div>
-            </div>
-
-            <p className="welcome-hint">
-              Drag & drop XML or folders anywhere to import
-            </p>
+            </section>
           </div>
+
+          <p className="welcome-hint">
+            Drag &amp; drop XML or folders anywhere to import
+          </p>
         </div>
       )}
 
@@ -711,7 +682,9 @@ function App() {
       )}
 
       {mode === 'quickTag' && !loading && (
-        <QuickTagScreen />
+        <div className="app-quicktag-wrap">
+          <QuickTagScreen />
+        </div>
       )}
 
       {showExportModal && library && (
@@ -735,13 +708,6 @@ function App() {
         />
       )}
 
-      {showTagsManagementSuite && (
-        <TagsManagementSuite
-          isOpen={showTagsManagementSuite}
-          onClose={() => setShowTagsManagementSuite(false)}
-        />
-      )}
-
       {showGenreManagementSuite && (
         <GenreManagementSuite
           isOpen={showGenreManagementSuite}
@@ -754,7 +720,7 @@ function App() {
       <AudioFeaturesWizard
         isOpen={showAudioFeaturesWizard}
         onClose={() => setShowAudioFeaturesWizard(false)}
-        selectedFiles={library?.Tracks?.map((t: Track) => t.Location?.replace('file://localhost', '')) || []}
+        selectedFiles={(library?.tracks?.map((t: Track) => t.Location?.replace('file://localhost', '')) ?? []).filter((p): p is string => p != null)}
       />
 
       <Toaster

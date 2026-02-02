@@ -1,14 +1,12 @@
 import { useEffect, useRef } from 'react';
-import { FileEdit, CheckSquare, XSquare, Music, Search, RotateCcw, Trash2 } from 'lucide-react';
+import { CheckSquare, XSquare, Music, RotateCcw, Trash2, FolderOpen } from 'lucide-react';
 
 interface TrackContextMenuProps {
   x: number;
   y: number;
   track?: any;  // The right-clicked track (if single-track operation)
   onClose: () => void;
-  onWriteTags: () => void;
   onDetectKeys: () => void;
-  onFindTags: () => void;
   onDiscardChanges: () => void;
   onSelectAll: () => void;
   onClearSelection: () => void;
@@ -23,9 +21,7 @@ export default function TrackContextMenu({
   y,
   track,
   onClose,
-  onWriteTags,
   onDetectKeys,
-  onFindTags,
   onDiscardChanges,
   onSelectAll,
   onClearSelection,
@@ -74,17 +70,18 @@ export default function TrackContextMenu({
       </div>
       <div className="context-menu-separator" />
 
-      <button
-        className="context-menu-item"
-        onClick={() => {
-          onWriteTags();
-          onClose();
-        }}
-      >
-        <FileEdit size={16} />
-        <span>Write Tags to Files</span>
-        {operationCount > 0 && <span className="badge">{operationCount}</span>}
-      </button>
+      {isSingleTrack && track?.Location && window.electronAPI?.showItemInFolder && (
+        <button
+          className="context-menu-item"
+          onClick={() => {
+            window.electronAPI?.showItemInFolder?.(track.Location);
+            onClose();
+          }}
+        >
+          <FolderOpen size={16} />
+          <span>Show in Finder</span>
+        </button>
+      )}
 
       <button
         className="context-menu-item"
@@ -95,18 +92,6 @@ export default function TrackContextMenu({
       >
         <Music size={16} />
         <span>Detect Musical Key</span>
-        {operationCount > 0 && <span className="badge">{operationCount}</span>}
-      </button>
-
-      <button
-        className="context-menu-item"
-        onClick={() => {
-          onFindTags();
-          onClose();
-        }}
-      >
-        <Search size={16} />
-        <span>Find Tags & Album Art</span>
         {operationCount > 0 && <span className="badge">{operationCount}</span>}
       </button>
 

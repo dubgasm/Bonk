@@ -1,16 +1,28 @@
-import { Download, Upload, Settings, FolderOpen, Database } from 'lucide-react';
+import { Download, Settings, Database } from 'lucide-react';
 
 interface HeaderProps {
-  onImport: () => void;
-  onImportFolder: () => void;
+  onImport?: () => void;
+  onImportFolder?: () => void;
   onExport: () => void;
   onSettings: () => void;
   onDatabase?: () => void;
   loading: boolean;
   hasLibrary: boolean;
+  onQuickTag: () => void;
+  isQuickTagMode?: boolean;
 }
 
-export default function Header({ onImport, onImportFolder, onExport, onSettings, onDatabase, loading, hasLibrary }: HeaderProps) {
+export default function Header({
+  onImport,
+  onImportFolder,
+  onExport,
+  onSettings,
+  onDatabase,
+  loading,
+  hasLibrary,
+  onQuickTag,
+  isQuickTagMode,
+}: HeaderProps) {
   return (
     <header className="header">
       <div className="header-content">
@@ -20,6 +32,13 @@ export default function Header({ onImport, onImportFolder, onExport, onSettings,
         </div>
         
         <div className="header-actions">
+          <button 
+            className={`btn btn-secondary ${isQuickTagMode ? 'btn-secondary-active' : ''}`} 
+            onClick={onQuickTag}
+            title="Quick Tag mode"
+          >
+            Quick Tag
+          </button>
           <button 
             className="btn btn-icon" 
             onClick={onSettings}
@@ -37,22 +56,24 @@ export default function Header({ onImport, onImportFolder, onExport, onSettings,
               Rekordbox DB
             </button>
           )}
-          <button 
-            className="btn btn-secondary" 
-            onClick={onImport}
-            disabled={loading}
-          >
-            <Upload size={18} />
-            Import XML
-          </button>
-          <button 
-            className="btn btn-secondary" 
-            onClick={onImportFolder}
-            disabled={loading}
-          >
-            <FolderOpen size={18} />
-            Import Folder
-          </button>
+          {onImport != null && (
+            <button 
+              className="btn btn-secondary" 
+              onClick={onImport}
+              disabled={loading}
+            >
+              Import XML
+            </button>
+          )}
+          {onImportFolder != null && (
+            <button 
+              className="btn btn-secondary" 
+              onClick={onImportFolder}
+              disabled={loading}
+            >
+              Import Folder
+            </button>
+          )}
           <button 
             className="btn btn-primary" 
             onClick={onExport}

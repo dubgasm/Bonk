@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Music, Search, FileEdit, RotateCcw, CheckSquare, XSquare, AlertTriangle, Copy, FileText, FileAudio, MapPin, Zap, Tag, Disc, Trash2, ChevronDown, Sparkles, Activity } from 'lucide-react';
+import { Music, RotateCcw, CheckSquare, XSquare, AlertTriangle, Copy, FileText, FileAudio, MapPin, Zap, Tag, Disc, Trash2, ChevronDown, Sparkles, Activity } from 'lucide-react';
 
 interface TrackTableToolbarProps {
   selectedCount: number;
@@ -7,8 +7,6 @@ interface TrackTableToolbarProps {
   missingCount: number;
   isCheckingMissing?: boolean;
   onDetectKeys: () => void;
-  onFindTags: () => void;
-  onWriteTags: () => void;
   onDiscardChanges: () => void;
   onSelectAll: () => void;
   onClearSelection: () => void;
@@ -31,8 +29,6 @@ export default function TrackTableToolbar({
   totalCount,
   missingCount,
   onDetectKeys,
-  onFindTags,
-  onWriteTags,
   onDiscardChanges,
   onSelectAll,
   onClearSelection,
@@ -80,17 +76,9 @@ export default function TrackTableToolbar({
           <Music size={16} />
           <span>Keys</span>
         </button>
-        <button className="btn btn-sm" onClick={onFindTags} disabled={!hasSelection} title="Find Tags (⌘F)">
-          <Search size={16} />
-          <span>Find Tags</span>
-        </button>
         <button className="btn btn-sm" onClick={onAutoTag} disabled={!hasSelection} title="Auto Tag">
           <Sparkles size={16} />
           <span>Auto Tag</span>
-        </button>
-        <button className="btn btn-sm" onClick={onWriteTags} disabled={!hasSelection} title="Write Tags (⌘W)">
-          <FileEdit size={16} />
-          <span>Write</span>
         </button>
         <button className="btn btn-sm" onClick={onDiscardChanges} disabled={!hasSelection} title="Discard (⌘Z)">
           <RotateCcw size={16} />

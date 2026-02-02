@@ -1,7 +1,7 @@
 # POPM Rating System — Current Status & Warnings
 
 **Last Updated:** 2025-01-28  
-**Status:** ✅ Writing Implemented | ❌ Reading Not Implemented
+**Status:** ✅ Writing Implemented | ✅ Reading Implemented
 
 ---
 
@@ -23,17 +23,19 @@
 
 ---
 
-## ❌ What Doesn't Work (Yet)
+## ✅ Rating Reading (IMPLEMENTED)
 
-### Rating Reading (NOT IMPLEMENTED)
-- **Scanning folders:** Ratings are NOT read back from files
-- **Reloading tracks:** Ratings are NOT read back from files
-- **Impact:** Ratings persist in files but don't show in UI until reading is implemented
+### Reading Functionality
+- **Scanning folders:** Ratings ARE read back from files ✅
+- **Reloading tracks:** Ratings ARE read back from files ✅
+- **Function:** `readBonkPopmRatingByte(filePath)` in `electron.js:71-102`
+- **Method:** Uses `music-metadata` to read POPM frames with email `bonk@suh`
+- **Display:** Converts byte to stars (0-5) using `popmByteToStars()` for UI display
 
-**Why not yet:**
-- Need to handle edge cases (multiple POPM frames, missing frames, etc.)
-- Need thorough testing
-- Current system works for writing (ratings are saved to files)
+**Integration Points:**
+- `scanDirectory` function (`electron.js:757`) - Reads ratings during folder scan
+- `reload-track` handler (`electron.js:1162`) - Reads ratings when reloading track
+- FFprobe fallback path (`electron.js:1016`) - Attempts to read ratings even when using FFprobe
 
 ---
 
@@ -46,10 +48,9 @@
    - Use `audioTags:setRatingByte` instead
    - If re-enabled, MUST use `'bonk@suh'` email
 
-2. **DO NOT read POPM ratings yet**
-   - Reading is NOT implemented
-   - Code comments warn about this in scan/reload functions
-   - Will use `music-metadata` when ready
+2. **DO NOT read POPM ratings with different email identifiers**
+   - MUST filter for `'bonk@suh'` only when reading
+   - Other POPM frames may exist but should be ignored
 
 3. **DO NOT use different email identifiers**
    - MUST use `'bonk@suh'` everywhere
@@ -83,9 +84,10 @@
 ### Electron Main Process
 - **Primary Writer:** `electron.js:5078-5160` (`audioTags:setRatingByte`)
 - **Legacy Writer:** `electron.js:4974-5070` (`audioTags:setRating`)
+- **Rating Reader:** `electron.js:71-102` (`readBonkPopmRatingByte`)
 - **FFmpeg Rating (Disabled):** `electron.js:2332-2350` (commented out with warnings)
-- **Scan Function:** `electron.js:757` (warning comment: ratings NOT read)
-- **Reload Function:** `electron.js:1122` (warning comment: ratings NOT read)
+- **Scan Function:** `electron.js:757` (reads ratings via `readBonkPopmRatingByte`)
+- **Reload Function:** `electron.js:1162` (reads ratings via `readBonkPopmRatingByte`)
 
 ### Frontend
 - **UI:** `src/components/QuickTagScreen.tsx`
@@ -102,13 +104,13 @@
 
 ---
 
-## 🔮 Future Work
+## ✅ Completed Work
 
-**Priority:** Implement POPM rating reading
-- Use `music-metadata` to read POPM frames
-- Filter for email `bonk@suh` only
-- Handle edge cases (multiple frames, missing frames, etc.)
-- Test thoroughly before enabling
+**POPM Rating Reading:** ✅ Implemented
+- Uses `music-metadata` to read POPM frames
+- Filters for email `bonk@suh` only
+- Handles edge cases (missing frames, multiple frames)
+- Integrated into scan and reload functions
 
 ---
 

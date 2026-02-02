@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Database, Download, Upload, RefreshCw, X, CheckCircle, AlertCircle, Loader, Archive } from 'lucide-react';
+import { Database, Download, Upload, X, CheckCircle, AlertCircle, Loader, Archive } from 'lucide-react';
 
 interface RekordboxDBModalProps {
   onClose: () => void;
@@ -24,7 +24,6 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
   const [status, setStatus] = useState<OperationStatus>('idle');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [detailsMessage, setDetailsMessage] = useState<string>('');
-
   useEffect(() => {
     loadConfig();
   }, []);
@@ -128,6 +127,26 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
     try {
       if (!window.electronAPI || !currentLibrary) return;
 
+      // Safety confirmation before writing to Rekordbox DB
+      const modeLabel =
+        syncMode === 'overwrite'
+          ? 'OVERWRITE (high risk – may delete tracks not in Bonk)'
+          : syncMode === 'update'
+          ? 'UPDATE existing tracks'
+          : 'MERGE (add new + update existing)';
+
+      const confirmed = window.confirm(
+        `⚠️ Export to Rekordbox database\n\n` +
+          `You are about to export your current Bonk library to the Rekordbox database using **${modeLabel}** mode.\n\n` +
+          `- Make sure you have a recent Rekordbox library backup (Rekordbox → File → Library → Backup Library).\n` +
+          `- In case of conflicts, Bonk's changes will take precedence.\n\n` +
+          `Do you want to continue?`
+      );
+
+      if (!confirmed) {
+        return;
+      }
+
       setStatus('loading');
       setStatusMessage('Exporting to Rekordbox database...');
       setDetailsMessage(`Mode: ${syncMode}`);
@@ -201,47 +220,78 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
     }
   };
 
-  const handleSyncWithDB = async () => {
+  const handleExportToCustomDB = async () => {
     try {
       if (!window.electronAPI || !currentLibrary) return;
 
-      setStatus('loading');
-      setStatusMessage('Syncing with Rekordbox database...');
-      setDetailsMessage('Analyzing changes...');
+      const dbPath = await (window.electronAPI as any).rekordboxSelectDatabase?.();
+      if (!dbPath) {
+        return;
+      }
 
-      const result = await (window.electronAPI as any).rekordboxSyncDatabase?.(
+      // Safety confirmation before writing to a custom Rekordbox DB
+      const modeLabel =
+        syncMode === 'overwrite'
+          ? 'OVERWRITE (high risk – may delete tracks not in Bonk)'
+          : syncMode === 'update'
+          ? 'UPDATE existing tracks'
+          : 'MERGE (add new + update existing)';
+
+      const confirmed = window.confirm(
+        `⚠️ Export to custom Rekordbox database\n\n` +
+          `You selected:\n${dbPath}\n\n` +
+          `This will export your current Bonk library to that database using **${modeLabel}** mode.\n\n` +
+          `- Make sure you have a backup of that database.\n` +
+          `- In conflicts, Bonk's changes will take precedence.\n\n` +
+          `Do you want to continue?`
+      );
+
+      if (!confirmed) {
+        return;
+      }
+
+      setStatus('loading');
+      setStatusMessage('Exporting to selected Rekordbox database...');
+      setDetailsMessage(`Mode: ${syncMode}`);
+
+      const result = await (window.electronAPI as any).rekordboxExportDatabase?.(
         currentLibrary,
-        customDbPath || null
+        dbPath,
+        syncMode
       );
 
       if (result?.success) {
         setStatus('success');
-        setStatusMessage(
-          `Sync complete: ${result.updated_in_db || 0} updates to Rekordbox, ${result.updated_in_bonk || 0} updates to Bonk`
-        );
-        
-        if (result.conflicts && result.conflicts.length > 0) {
-          setDetailsMessage(`${result.conflicts.length} conflicts resolved`);
-        } else {
-          setDetailsMessage('No conflicts found');
-        }
+        const added = result.added || 0;
+        const updated = result.updated || 0;
+        const deleted = result.deleted || 0;
+        const skipped = result.skipped || 0;
+        const parts = [];
+        if (added > 0) parts.push(`${added} added`);
+        if (updated > 0) parts.push(`${updated} updated`);
+        if (deleted > 0) parts.push(`${deleted} deleted`);
+        if (skipped > 0) parts.push(`${skipped} skipped`);
+        setStatusMessage(`Export to custom DB complete: ${parts.join(', ')}`);
 
-        // Update library with synced data
-        if (result.tracks) {
-          onSync({ ...currentLibrary, tracks: result.tracks });
+        let detailsMsg = `Database: ${dbPath}`;
+        if (result.errors && result.errors.length > 0) {
+          detailsMsg += `\n\nErrors: ${result.errors.slice(0, 3).join(', ')}${
+            result.errors.length > 3 ? '...' : ''
+          }`;
         }
+        setDetailsMessage(detailsMsg);
 
         setTimeout(() => {
           setStatus('idle');
         }, 3000);
       } else {
         setStatus('error');
-        setStatusMessage('Sync failed');
+        setStatusMessage('Export failed');
         setDetailsMessage(result?.error || 'Unknown error occurred');
       }
     } catch (error: any) {
       setStatus('error');
-      setStatusMessage('Sync error');
+      setStatusMessage('Export error');
       setDetailsMessage(error.message);
     }
   };
@@ -311,7 +361,8 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
                   <h3>Export to Rekordbox</h3>
                 </div>
                 <p className="section-description">
-                  Write your Bonk library changes back to Rekordbox database.
+                  Write your Bonk library changes back to your primary Rekordbox database, or export to a different
+                  database file.
                 </p>
                 
                 <div className="sync-mode-selector">
@@ -371,26 +422,16 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
                   disabled={status === 'loading'}
                 >
                   <Upload size={20} />
-                  Export to Database
+                  Export to Primary Database
                 </button>
-              </div>
-
-              {/* Sync Section */}
-              <div className="db-section">
-                <div className="db-section-header">
-                  <RefreshCw size={18} />
-                  <h3>Two-Way Sync</h3>
-                </div>
-                <p className="section-description">
-                  Intelligently sync changes between Bonk and Rekordbox. Bonk changes take precedence in conflicts.
-                </p>
-                <button 
-                  className="btn-primary btn-large"
-                  onClick={handleSyncWithDB}
+                <button
+                  className="btn-secondary btn-large"
+                  onClick={handleExportToCustomDB}
                   disabled={status === 'loading'}
+                  style={{ marginTop: '10px' }}
                 >
-                  <RefreshCw size={20} />
-                  Sync with Database
+                  <Upload size={18} />
+                  Export to Custom Database…
                 </button>
               </div>
             </>
@@ -413,7 +454,7 @@ export default function RekordboxDBModal({ onClose, onImport, onSync, currentLib
           <div className="warning-section">
             <AlertCircle size={16} />
             <div>
-              <strong>Important:</strong> Always backup your Rekordbox library before syncing! 
+              <strong>Important:</strong> Always backup your Rekordbox library before importing or exporting!
               (Rekordbox → File → Library → Backup Library)
             </div>
           </div>

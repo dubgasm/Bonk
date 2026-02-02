@@ -34,6 +34,8 @@ export default function AudioPlayer({ track, onClose }: AudioPlayerProps) {
   const [editingCue, setEditingCue] = useState<CuePoint | null>(null);
   const [showAddCue, setShowAddCue] = useState(false);
   const cancelledRef = useRef(false);
+  const useRustAudioRef = useRef<boolean | null>(null);
+  const positionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const { updateTrack } = useLibraryStore();
 
   const getFilePath = (location: string): string => {
@@ -56,12 +58,63 @@ export default function AudioPlayer({ track, onClose }: AudioPlayerProps) {
       return;
     }
 
-    const fileExt = (filePath.split('.').pop() || '').toLowerCase();
-    const alwaysTranscode = ['wma', 'aiff', 'aif'].includes(fileExt);
     const api = (window as any).electronAPI;
 
-    const loadAndPlay = async () => {
+    const loadWithRust = async () => {
       try {
+        // Initialize Rust audio player
+        if (useRustAudioRef.current === null) {
+          const initRes = await api?.rustAudioInit?.();
+          useRustAudioRef.current = initRes?.success || false;
+        }
+
+        if (!useRustAudioRef.current) {
+          throw new Error('Rust audio not available');
+        }
+
+        // Load file
+        const loadRes = await api.rustAudioLoad(filePath);
+        if (cancelledRef.current) return;
+
+        if (!loadRes?.success) {
+          throw new Error(loadRes?.error || 'Failed to load audio');
+        }
+
+        setDuration(loadRes.duration || 0);
+        setIsLoading(false);
+        setError(null);
+        toast.success('Audio loaded (Rust backend)');
+
+        // Set up position polling
+        if (positionIntervalRef.current) {
+          clearInterval(positionIntervalRef.current);
+        }
+        positionIntervalRef.current = setInterval(async () => {
+          if (cancelledRef.current) return;
+          const [playingRes, positionRes] = await Promise.all([
+            api.rustAudioIsPlaying(),
+            api.rustAudioGetPosition()
+          ]);
+          if (playingRes?.isPlaying) {
+            setIsPlaying(true);
+            setCurrentTime(positionRes?.position || 0);
+          } else {
+            setIsPlaying(false);
+          }
+        }, 100);
+
+        return true;
+      } catch (e) {
+        console.warn('Rust audio failed, falling back to HTML5:', e);
+        return false;
+      }
+    };
+
+    const loadWithHTML5 = async () => {
+      try {
+        const fileExt = (filePath.split('.').pop() || '').toLowerCase();
+        const alwaysTranscode = ['wma', 'aiff', 'aif'].includes(fileExt);
+        
         let url: string;
         if (alwaysTranscode && api?.transcodeForAudition) {
           const res = await api.transcodeForAudition(filePath);
@@ -115,7 +168,7 @@ export default function AudioPlayer({ track, onClose }: AudioPlayerProps) {
             setIsLoading(false);
             setError(null);
             setDuration(audio.duration);
-            toast.success('Audio loaded');
+            toast.success('Audio loaded (HTML5 backend)');
           }
         });
 
@@ -129,23 +182,53 @@ export default function AudioPlayer({ track, onClose }: AudioPlayerProps) {
       }
     };
 
-    loadAndPlay();
+    // Try Rust first, fall back to HTML5
+    loadWithRust().then((rustSuccess) => {
+      if (!rustSuccess && !cancelledRef.current) {
+        loadWithHTML5();
+      }
+    });
 
     return () => {
       cancelledRef.current = true;
+      if (positionIntervalRef.current) {
+        clearInterval(positionIntervalRef.current);
+        positionIntervalRef.current = null;
+      }
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.src = '';
       }
       audioRef.current = null;
+      // Stop Rust audio if it was playing
+      if (useRustAudioRef.current) {
+        api?.rustAudioStop?.();
+      }
     };
   }, [track.TrackID, track.Location]);
 
-  const togglePlay = () => {
-    const a = audioRef.current;
-    if (!a) return;
-    if (a.paused) a.play();
-    else a.pause();
+  const togglePlay = async () => {
+    const api = (window as any).electronAPI;
+    
+    if (useRustAudioRef.current) {
+      try {
+        const isPlayingRes = await api.rustAudioIsPlaying();
+        if (isPlayingRes?.isPlaying) {
+          await api.rustAudioPause();
+          setIsPlaying(false);
+        } else {
+          await api.rustAudioPlay();
+          setIsPlaying(true);
+        }
+      } catch (e) {
+        console.error('Rust audio play/pause error:', e);
+      }
+    } else {
+      const a = audioRef.current;
+      if (!a) return;
+      if (a.paused) a.play();
+      else a.pause();
+    }
   };
 
   const skip = (seconds: number) => {
@@ -154,16 +237,37 @@ export default function AudioPlayer({ track, onClose }: AudioPlayerProps) {
     a.currentTime = Math.max(0, Math.min(a.duration, currentTime + seconds));
   };
 
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleVolumeChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = parseFloat(e.target.value);
     setVolume(v);
-    if (audioRef.current) audioRef.current.volume = v;
+    
+    const api = (window as any).electronAPI;
+    if (useRustAudioRef.current) {
+      try {
+        await api.rustAudioSetVolume(v);
+      } catch (e) {
+        console.error('Rust audio volume error:', e);
+      }
+    } else {
+      if (audioRef.current) audioRef.current.volume = v;
+    }
   };
 
-  const toggleMute = () => {
-    const a = audioRef.current;
-    if (a) a.volume = isMuted ? volume : 0;
-    setIsMuted(!isMuted);
+  const toggleMute = async () => {
+    const api = (window as any).electronAPI;
+    
+    if (useRustAudioRef.current) {
+      try {
+        await api.rustAudioSetVolume(isMuted ? volume : 0);
+        setIsMuted(!isMuted);
+      } catch (e) {
+        console.error('Rust audio mute error:', e);
+      }
+    } else {
+      const a = audioRef.current;
+      if (a) a.volume = isMuted ? volume : 0;
+      setIsMuted(!isMuted);
+    }
   };
 
   const jumpToCue = (cue: CuePoint) => {

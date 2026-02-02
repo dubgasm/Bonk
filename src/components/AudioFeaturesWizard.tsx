@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -11,6 +11,7 @@ import {
   Zap,
   Activity,
   Tag,
+  FolderOpen,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -84,7 +85,16 @@ export function AudioFeaturesWizard({ isOpen, onClose, selectedFiles }: AudioFea
   const [currentTrack, setCurrentTrack] = useState<string>('');
   const [results, setResults] = useState<AudioFeaturesResult[]>([]);
   const [events, setEvents] = useState<string[]>([]);
-  
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; filePath: string } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') setContextMenu(null); };
+    document.addEventListener('keydown', onEscape);
+    return () => document.removeEventListener('keydown', onEscape);
+  }, [contextMenu]);
+
   // Reset on open
   useEffect(() => {
     if (isOpen) {
@@ -420,7 +430,16 @@ export function AudioFeaturesWizard({ isOpen, onClose, selectedFiles }: AudioFea
                 
                 <div className="af-results-list">
                   {results.map((result, i) => (
-                    <div key={i} className={`af-result-item af-result-${result.status}`}>
+                    <div
+                      key={i}
+                      className={`af-result-item af-result-${result.status}`}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (result.trackPath && window.electronAPI?.showItemInFolder) {
+                          setContextMenu({ x: e.clientX, y: e.clientY, filePath: result.trackPath });
+                        }
+                      }}
+                    >
                       <div className="af-result-name">
                         {result.trackPath.split('/').pop()}
                       </div>
@@ -439,6 +458,39 @@ export function AudioFeaturesWizard({ isOpen, onClose, selectedFiles }: AudioFea
                     </div>
                   ))}
                 </div>
+
+                {contextMenu && (
+                  <>
+                    <div
+                      className="context-menu-overlay"
+                      style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+                      onClick={() => setContextMenu(null)}
+                      onContextMenu={(e) => e.preventDefault()}
+                      aria-hidden
+                    />
+                    <div
+                      ref={contextMenuRef}
+                      className="context-menu"
+                      style={{ left: contextMenu.x, top: contextMenu.y, zIndex: 9999 }}
+                    >
+                      <div className="context-menu-header">
+                        <span className="context-menu-title">File</span>
+                      </div>
+                      <div className="context-menu-separator" />
+                      <button
+                        type="button"
+                        className="context-menu-item"
+                        onClick={() => {
+                          window.electronAPI?.showItemInFolder?.(contextMenu.filePath);
+                          setContextMenu(null);
+                        }}
+                      >
+                        <FolderOpen size={16} />
+                        <span>Show in Finder</span>
+                      </button>
+                    </div>
+                  </>
+                )}
                 
                 <div className="af-actions">
                   <button className="af-btn af-btn-primary" onClick={handleClose}>

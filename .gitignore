@@ -9,6 +9,11 @@ dist/
 release/
 build/
 
+# Rust native module
+native-audio/target/
+native-audio/*.node
+native-audio/Cargo.lock
+
 # Environment
 .env
 .env.local

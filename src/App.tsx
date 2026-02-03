@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useLibraryStore } from './store/useLibraryStore';
 import { useSettingsStore } from './store/useSettingsStore';
 import { useAutoTagStore } from './store/useAutoTagStore';
@@ -7,15 +7,30 @@ import Header from './components/Header';
 import TrackTable from './components/TrackTable';
 import TrackEditor from './components/TrackEditor';
 import SearchBar from './components/SearchBar';
-import ExportModal from './components/ExportModal';
-import SettingsModal from './components/SettingsModal';
-import RekordboxDBModal from './components/RekordboxDBModal';
-import GenreManagementSuite from './components/GenreManagementSuite';
 import PlaylistSidebar from './components/PlaylistSidebar';
-import AutoTagWizard from './components/AutoTagWizard';
-import AudioFeaturesWizard from './components/AudioFeaturesWizard';
-import QuickTagScreen from './components/QuickTagScreen';
 import { Tag, Music, Database, Archive, Sparkles, Activity, FolderOpen } from 'lucide-react';
+
+// Lazy load heavy modal components for better initial load performance
+const ExportModal = lazy(() => import('./components/ExportModal'));
+const SettingsModal = lazy(() => import('./components/SettingsModal'));
+const RekordboxDBModal = lazy(() => import('./components/RekordboxDBModal'));
+const GenreManagementSuite = lazy(() => import('./components/GenreManagementSuite'));
+const AutoTagWizard = lazy(() => import('./components/AutoTagWizard'));
+const AudioFeaturesWizard = lazy(() => import('./components/AudioFeaturesWizard'));
+const QuickTagScreen = lazy(() => import('./components/QuickTagScreen'));
+
+// Loading fallback for lazy components
+const ModalLoader = () => (
+  <div className="modal-loader" style={{ 
+    display: 'flex', 
+    alignItems: 'center', 
+    justifyContent: 'center',
+    padding: '40px',
+    color: '#888'
+  }}>
+    Loading...
+  </div>
+);
 import { Track } from './types/track';
 import { Toaster } from 'sonner';
 import './styles/App.css';
@@ -80,6 +95,11 @@ declare global {
       onAudioFeaturesResult?: (callback: (data: any) => void) => void;
       removeAudioFeaturesListeners?: () => void;
       showItemInFolder?: (filePath: string) => Promise<void>;
+      // Album art extraction (lazy loading)
+      extractAlbumArt?: (location: string) => Promise<string | null>;
+      // Database progress tracking
+      onDatabaseProgress?: (callback: (data: { operation: string; progress: number; message: string }) => void) => void;
+      removeDatabaseProgressListener?: () => void;
     };
   }
 }
@@ -682,46 +702,64 @@ function App() {
       )}
 
       {mode === 'quickTag' && !loading && (
-        <div className="app-quicktag-wrap">
-          <QuickTagScreen />
-        </div>
+        <Suspense fallback={<ModalLoader />}>
+          <div className="app-quicktag-wrap">
+            <QuickTagScreen />
+          </div>
+        </Suspense>
       )}
 
       {showExportModal && library && (
-        <ExportModal
-          onClose={() => setShowExportModal(false)}
-          onExport={handleExport}
-          trackCount={library.tracks.length}
-        />
+        <Suspense fallback={<ModalLoader />}>
+          <ExportModal
+            onClose={() => setShowExportModal(false)}
+            onExport={handleExport}
+            trackCount={library.tracks.length}
+          />
+        </Suspense>
       )}
 
       {showSettingsModal && (
-        <SettingsModal onClose={() => setShowSettingsModal(false)} />
+        <Suspense fallback={<ModalLoader />}>
+          <SettingsModal onClose={() => setShowSettingsModal(false)} />
+        </Suspense>
       )}
 
       {showRekordboxDBModal && (
-        <RekordboxDBModal
-          onClose={() => setShowRekordboxDBModal(false)}
-          onImport={handleRekordboxDBImport}
-          onSync={handleRekordboxDBSync}
-          currentLibrary={library}
-        />
+        <Suspense fallback={<ModalLoader />}>
+          <RekordboxDBModal
+            onClose={() => setShowRekordboxDBModal(false)}
+            onImport={handleRekordboxDBImport}
+            onSync={handleRekordboxDBSync}
+            currentLibrary={library}
+          />
+        </Suspense>
       )}
 
       {showGenreManagementSuite && (
-        <GenreManagementSuite
-          isOpen={showGenreManagementSuite}
-          onClose={() => setShowGenreManagementSuite(false)}
-        />
+        <Suspense fallback={<ModalLoader />}>
+          <GenreManagementSuite
+            isOpen={showGenreManagementSuite}
+            onClose={() => setShowGenreManagementSuite(false)}
+          />
+        </Suspense>
       )}
 
-      {showAutoTagWizard && <AutoTagWizard />}
+      {showAutoTagWizard && (
+        <Suspense fallback={<ModalLoader />}>
+          <AutoTagWizard />
+        </Suspense>
+      )}
       
-      <AudioFeaturesWizard
-        isOpen={showAudioFeaturesWizard}
-        onClose={() => setShowAudioFeaturesWizard(false)}
-        selectedFiles={(library?.tracks?.map((t: Track) => t.Location?.replace('file://localhost', '')) ?? []).filter((p): p is string => p != null)}
-      />
+      {showAudioFeaturesWizard && (
+        <Suspense fallback={<ModalLoader />}>
+          <AudioFeaturesWizard
+            isOpen={showAudioFeaturesWizard}
+            onClose={() => setShowAudioFeaturesWizard(false)}
+            selectedFiles={(library?.tracks?.map((t: Track) => t.Location?.replace('file://localhost', '')) ?? []).filter((p): p is string => p != null)}
+          />
+        </Suspense>
+      )}
 
       <Toaster
         position="top-right"

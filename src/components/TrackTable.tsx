@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useAutoTagStore } from '../store/useAutoTagStore';
@@ -16,8 +17,15 @@ import RemoveFromPlaylistModal from './RemoveFromPlaylistModal';
 import SmartFixesModal, { SmartFixConfig } from './SmartFixesModal';
 import DeleteTracksModal from './DeleteTracksModal';
 import AudioFeaturesWizard from './AudioFeaturesWizard';
+import LazyAlbumArt from './LazyAlbumArt';
 import { Track } from '../types/track';
-const columnTemplate = '40px 60px 1.5fr 1.2fr 1.2fr 1fr 0.8fr 1fr 0.7fr 0.6fr';
+
+// Constants for virtual scrolling
+const ROW_HEIGHT = 50; // Fixed row height for virtualization (increased for better spacing)
+const OVERSCAN_COUNT = 10; // Render extra rows above/below viewport for smoother scrolling
+
+// Column layout: checkbox, album art, title, artist, album, genre, bpm, key, time, tags, year
+const columnTemplate = '45px 70px 2fr 1.5fr 1.5fr 1.2fr 0.9fr 1fr 0.8fr 1fr 0.7fr';
 
 export default function TrackTable() {
   const {
@@ -62,6 +70,15 @@ export default function TrackTable() {
   const [editValue, setEditValue] = useState('');
   const [isCheckingMissing, setIsCheckingMissing] = useState(false);
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+
+  // Virtual scrolling setup
+  const parentRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: filteredTracks.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: OVERSCAN_COUNT,
+  });
 
   const requestDeleteTracks = (trackIds: string[]) => {
     if (!trackIds.length) return;
@@ -512,64 +529,97 @@ export default function TrackTable() {
               <div>Year</div>
             </div>
 
-            <div className="track-table-rows" style={{ maxHeight: 600, overflowY: 'auto' }}>
-              {filteredTracks.map((track, index) => {
-                const isSelected = selectedTrack?.TrackID === track.TrackID;
-                const isMultiSelected = selectedTracks.has(track.TrackID);
-                const bpmValue = track.AverageBpm ? parseFloat(track.AverageBpm).toFixed(1) : '';
+            {/* Virtualized track list for optimal performance with large libraries */}
+            <div 
+              ref={parentRef}
+              className="track-table-rows" 
+              style={{ 
+                height: 'calc(100vh - 280px)', // Dynamic height based on viewport
+                minHeight: 400,
+                maxHeight: 'calc(100vh - 280px)',
+                overflowY: 'auto',
+                contain: 'strict', // Performance optimization for scrolling
+              }}
+            >
+              <div
+                style={{
+                  height: `${rowVirtualizer.getTotalSize()}px`,
+                  width: '100%',
+                  position: 'relative',
+                }}
+              >
+                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const track = filteredTracks[virtualRow.index];
+                  if (!track) return null;
+                  
+                  const isSelected = selectedTrack?.TrackID === track.TrackID;
+                  const isMultiSelected = selectedTracks.has(track.TrackID);
+                  const bpmValue = track.AverageBpm ? parseFloat(track.AverageBpm).toFixed(1) : '';
 
-                return (
-                  <div
-                    key={track.TrackID || index}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: columnTemplate,
-                      alignItems: 'center',
-                      padding: '6px 8px',
-                      boxSizing: 'border-box',
-                    }}
-                    className={`${isSelected ? 'selected' : ''} ${
-                      isMultiSelected ? 'multi-selected' : ''
-                    } ${track.isMissing ? 'missing-track' : ''}`}
-                    onClick={(e) => handleRowClick(track, e)}
-                    onContextMenu={(e) => handleContextMenu(track, e)}
-                    draggable={!track.isMissing}
-                    onDragStart={(e) => handleDragStart(e, track)}
-                    onDragEnd={(e) => { try { e.stopPropagation(); } catch (_) {} }}
-                  >
-                    <div onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={isMultiSelected}
-                        onChange={() => toggleTrackSelection(track.TrackID)}
-                      />
-                    </div>
-                    <div className="album-art-cell">
-                      <div className="album-art-placeholder">♪</div>
-                    </div>
-                    {renderEditableCell(track, 'Name', track.Name || 'Unknown', 'track-name')}
-                    {renderEditableCell(track, 'Artist', track.Artist || 'Unknown Artist')}
-                    {renderEditableCell(track, 'Album', track.Album || '')}
-                    {renderEditableCell(track, 'Genre', track.Genre || '')}
-                    {renderEditableCell(track, 'AverageBpm', bpmValue)}
-                    {renderEditableCell(track, 'Key', track.Key || '')}
-                    <div>{formatTime(track.TotalTime)}</div>
+                  return (
                     <div
-                      className="tags-cell"
-                      title="Click to edit tags"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setTagSelectorTrack(track);
+                      key={track.TrackID || virtualRow.index}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: columnTemplate,
+                        alignItems: 'center',
+                        padding: '6px 8px',
+                        boxSizing: 'border-box',
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: `${virtualRow.size}px`,
+                        transform: `translateY(${virtualRow.start}px)`,
                       }}
+                      className={`track-row ${isSelected ? 'selected' : ''} ${
+                        isMultiSelected ? 'multi-selected' : ''
+                      } ${track.isMissing ? 'missing-track' : ''}`}
+                      onClick={(e) => handleRowClick(track, e)}
+                      onContextMenu={(e) => handleContextMenu(track, e)}
+                      draggable={!track.isMissing}
+                      onDragStart={(e) => handleDragStart(e, track)}
+                      onDragEnd={(e) => { try { e.stopPropagation(); } catch (_) {} }}
                     >
-                      {(track.tags || []).length
-                        ? track.tags!.map((t) => t.name).join(', ')
-                        : 'Add tags'}
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isMultiSelected}
+                          onChange={() => toggleTrackSelection(track.TrackID)}
+                        />
+                      </div>
+                      <div className="album-art-cell">
+                        <LazyAlbumArt
+                          trackId={track.TrackID}
+                          location={track.Location}
+                          albumArt={(track as any).AlbumArt}
+                          size={36}
+                        />
+                      </div>
+                      {renderEditableCell(track, 'Name', track.Name || 'Unknown', 'track-name')}
+                      {renderEditableCell(track, 'Artist', track.Artist || 'Unknown Artist')}
+                      {renderEditableCell(track, 'Album', track.Album || '')}
+                      {renderEditableCell(track, 'Genre', track.Genre || '')}
+                      {renderEditableCell(track, 'AverageBpm', bpmValue)}
+                      {renderEditableCell(track, 'Key', track.Key || '')}
+                      <div>{formatTime(track.TotalTime)}</div>
+                      <div
+                        className="tags-cell"
+                        title="Click to edit tags"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTagSelectorTrack(track);
+                        }}
+                      >
+                        {(track.tags || []).length
+                          ? track.tags!.map((t) => t.name).join(', ')
+                          : 'Add tags'}
+                      </div>
+                      {renderEditableCell(track, 'Year', track.Year || '')}
                     </div>
-                    {renderEditableCell(track, 'Year', track.Year || '')}
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}

@@ -526,6 +526,128 @@ ipcMain.handle('transcode-for-audition', async (_, filePath) => {
   }
 });
 
+// Album art extraction handler (lazy loading for performance)
+ipcMain.handle('extract-album-art', async (_, location) => {
+  if (!location) return null;
+  
+  try {
+    // Parse file path from Location
+    let filePath = location;
+    if (filePath.startsWith('file://localhost')) {
+      filePath = filePath.replace('file://localhost', '');
+    } else if (filePath.startsWith('file://')) {
+      filePath = filePath.replace('file://', '');
+    }
+    filePath = decodeURIComponent(filePath);
+    
+    // Check if file exists
+    try {
+      await fs.access(filePath);
+    } catch {
+      return null;
+    }
+    
+    // Use FFprobe to check for embedded artwork
+    const ffprobeOutput = await new Promise((resolve, reject) => {
+      let output = '';
+      const ffprobe = spawn(FFPROBE_PATH || 'ffprobe', [
+        '-v', 'quiet',
+        '-print_format', 'json',
+        '-show_streams',
+        filePath
+      ]);
+      
+      ffprobe.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+      
+      ffprobe.on('close', (code) => {
+        if (code === 0 && output) {
+          try {
+            resolve(JSON.parse(output));
+          } catch {
+            reject(new Error('Invalid JSON from ffprobe'));
+          }
+        } else {
+          reject(new Error('ffprobe failed'));
+        }
+      });
+      
+      ffprobe.on('error', reject);
+    });
+    
+    // Check if file has embedded artwork
+    const hasArtwork = ffprobeOutput.streams?.some(s => 
+      (s.codec_name === 'mjpeg' || s.codec_name === 'png') && s.codec_type === 'video'
+    );
+    
+    if (!hasArtwork) {
+      return null;
+    }
+    
+    // Extract album art with timeout
+    const tempArtPath = path.join(os.tmpdir(), `cover_${Date.now()}_${Math.random().toString(36).substr(2, 6)}.jpg`);
+    let ffmpegProcess = null;
+    
+    try {
+      await Promise.race([
+        new Promise((resolveArt, rejectArt) => {
+          ffmpegProcess = spawn(FFMPEG_PATH || 'ffmpeg', [
+            '-i', filePath,
+            '-an',
+            '-vframes', '1',
+            '-vcodec', 'mjpeg',
+            '-q:v', '5', // Lower quality for faster extraction
+            '-y',
+            tempArtPath
+          ]);
+          
+          ffmpegProcess.on('close', (code) => {
+            if (code === 0) {
+              resolveArt();
+            } else {
+              rejectArt(new Error('FFmpeg art extraction failed'));
+            }
+          });
+          
+          ffmpegProcess.on('error', rejectArt);
+        }),
+        new Promise((_, reject) => {
+          setTimeout(() => {
+            if (ffmpegProcess && !ffmpegProcess.killed) {
+              ffmpegProcess.kill('SIGTERM');
+            }
+            reject(new Error('Album art extraction timeout'));
+          }, 3000); // 3 second timeout for lazy loading
+        })
+      ]);
+      
+      // Read the extracted image
+      const artBuffer = await fs.readFile(tempArtPath);
+      const stats = await fs.stat(tempArtPath);
+      
+      // Clean up temp file
+      await fs.unlink(tempArtPath).catch(() => {});
+      
+      // Only return if file is reasonable size
+      if (stats.size > 0 && stats.size < 5 * 1024 * 1024) { // Max 5MB
+        return `data:image/jpeg;base64,${artBuffer.toString('base64')}`;
+      }
+      
+      return null;
+    } catch (extractError) {
+      // Cleanup on error
+      if (ffmpegProcess && !ffmpegProcess.killed) {
+        ffmpegProcess.kill('SIGKILL');
+      }
+      await fs.unlink(tempArtPath).catch(() => {});
+      return null;
+    }
+  } catch (error) {
+    return null;
+  }
+});
+
 // Rust audio player IPC handlers
 ipcMain.handle('rust-audio-init', async () => {
   if (!AudioPlayer) {
@@ -1384,37 +1506,87 @@ ipcMain.handle('rekordbox-set-config', async (_, installDir, appDir) => {
   }
 });
 
-ipcMain.handle('rekordbox-import-database', async (_, dbPath) => {
+ipcMain.handle('rekordbox-import-database', async (event, dbPath) => {
   try {
     console.log('📀 Importing from Rekordbox database...');
     const pythonPath = 'python3';
     const bridgePath = getRekordboxBridgePath();
     
-    const command = dbPath 
-      ? `${pythonPath} "${bridgePath}" import-database "${dbPath}"`
-      : `${pythonPath} "${bridgePath}" import-database`;
+    const args = dbPath 
+      ? [bridgePath, 'import-database', dbPath]
+      : [bridgePath, 'import-database'];
     
-    console.log('Running command:', command);
-    const { stdout, stderr } = await execAsync(command, {
-      maxBuffer: 50 * 1024 * 1024 // 50MB buffer for large libraries
+    console.log('Running python with args:', args);
+    
+    // Use spawn for streaming progress updates
+    return new Promise((resolve) => {
+      const proc = spawn(pythonPath, args, {
+        maxBuffer: 50 * 1024 * 1024
+      });
+      
+      let stdout = '';
+      let stderr = '';
+      let lastProgressSent = 0;
+      
+      proc.stdout.on('data', (data) => {
+        const chunk = data.toString();
+        stdout += chunk;
+        
+        // Send progress updates (throttled to avoid flooding)
+        const now = Date.now();
+        if (now - lastProgressSent > 200) {
+          lastProgressSent = now;
+          // Try to extract progress from Python output
+          const progressMatch = chunk.match(/Progress:\s*(\d+)/);
+          if (progressMatch) {
+            const progress = parseInt(progressMatch[1], 10);
+            event.sender.send('database-progress', { 
+              operation: 'import', 
+              progress,
+              message: `Importing tracks... ${progress}%`
+            });
+          }
+        }
+      });
+      
+      proc.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+      
+      proc.on('close', (code) => {
+        if (stderr) {
+          console.warn('Python stderr:', stderr);
+        }
+        
+        try {
+          const result = JSON.parse(stdout);
+          console.log(`✓ Imported ${result.trackCount} tracks, ${result.playlistCount} playlists`);
+          
+          // Send completion progress
+          event.sender.send('database-progress', { 
+            operation: 'import', 
+            progress: 100,
+            message: 'Import complete'
+          });
+          
+          resolve(result);
+        } catch (parseError) {
+          console.error('Failed to parse Python output:', stdout.slice(0, 500));
+          resolve({ 
+            success: false, 
+            error: `Failed to parse import result: ${parseError.message}` 
+          });
+        }
+      });
+      
+      proc.on('error', (error) => {
+        console.error('Rekordbox import error:', error);
+        resolve({ 
+          success: false, 
+          error: `Failed to import from Rekordbox database: ${error.message}` 
+        });
+      });
     });
-    
-    if (stderr) {
-      console.warn('Python stderr:', stderr);
-    }
-    
-    const result = JSON.parse(stdout);
-    console.log(`✓ Imported ${result.trackCount} tracks, ${result.playlistCount} playlists`);
-    
-    // Album art extraction will happen in background after import completes
-    // This prevents blocking the import process
-    if (result.success && result.library && result.library.tracks) {
-      console.log('🎨 Album art will be extracted in background (non-blocking)...');
-      // Note: Album art extraction moved to background to avoid blocking import
-      // It will be extracted on-demand when tracks are displayed
-    }
-    
-    return result;
   } catch (error) {
     console.error('Rekordbox import error:', error);
     return { 

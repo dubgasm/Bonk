@@ -712,6 +712,51 @@ body {
   color: var(--text-secondary);
 }
 
+/* Virtualized Track Row Optimizations */
+.track-row {
+  will-change: transform; /* GPU acceleration for smooth scrolling */
+  contain: layout style paint; /* CSS containment for better performance */
+  border-bottom: 1px solid rgba(64, 64, 64, 0.3);
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.track-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.track-row.selected {
+  background: rgba(29, 185, 84, 0.15);
+}
+
+.track-row.selected:hover {
+  background: rgba(29, 185, 84, 0.2);
+}
+
+.track-row.multi-selected {
+  background: rgba(29, 185, 84, 0.1);
+}
+
+.track-row.multi-selected:hover {
+  background: rgba(29, 185, 84, 0.15);
+}
+
+.track-row.missing-track {
+  opacity: 0.6;
+  background: rgba(255, 85, 85, 0.05);
+}
+
+.track-row.missing-track:hover {
+  background: rgba(255, 85, 85, 0.1);
+}
+
+/* Optimize track table rows container for virtualization */
+.track-table-rows {
+  will-change: scroll-position;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+
 /* Track Editor */
 .track-editor {
   height: 100%;

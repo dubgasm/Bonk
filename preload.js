@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkFileExists: (filePath) => ipcRenderer.invoke('check-file-exists', filePath),
   showItemInFolder: (filePath) => ipcRenderer.invoke('show-item-in-folder', filePath),
   searchMissingTracksInFolder: (folderPath, requests) => ipcRenderer.invoke('search-missing-tracks-in-folder', folderPath, requests),
+  // Album art extraction (lazy loading)
+  extractAlbumArt: (location) => ipcRenderer.invoke('extract-album-art', location),
   // Audio playback handler
   readAudioFile: (filePath) => ipcRenderer.invoke('read-audio-file', filePath),
   transcodeForAudition: (filePath) => ipcRenderer.invoke('transcode-for-audition', filePath),
@@ -85,6 +87,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeAudioFeaturesListeners: () => {
     ipcRenderer.removeAllListeners('audiofeatures:event');
     ipcRenderer.removeAllListeners('audiofeatures:result');
+  },
+  
+  // Database operation progress
+  onDatabaseProgress: (callback) => {
+    ipcRenderer.on('database-progress', (_, data) => callback(data));
+  },
+  removeDatabaseProgressListener: () => {
+    ipcRenderer.removeAllListeners('database-progress');
   },
 });
 

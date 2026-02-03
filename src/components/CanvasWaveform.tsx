@@ -207,92 +207,38 @@ export const CanvasWaveform: React.FC<CanvasWaveformProps> = ({
     const gap = 1.2; // Increased gap between bars for cleaner, more defined separation
     const cornerRadius = 1.5; // Rounded tops for sleeker look
     
-    // Helper to draw rounded rectangle (compatible method)
-    const drawRoundedRect = (x: number, y: number, w: number, h: number, r: number) => {
-      const radius = Math.min(r, w / 2, h / 2);
-      ctx.beginPath();
-      ctx.moveTo(x + radius, y);
-      ctx.lineTo(x + w - radius, y);
-      ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
-      ctx.lineTo(x + w, y + h);
-      ctx.lineTo(x, y + h);
-      ctx.lineTo(x, y + radius);
-      ctx.quadraticCurveTo(x, y, x + radius, y);
-      ctx.closePath();
-    };
-    
-    // Smooth transitions: average with neighbors for smoother appearance
-    const smoothAmp = (i: number) => {
-      const current = clamp01(peaks[i] || 0);
-      const prev = i > 0 ? clamp01(peaks[i - 1] || 0) : current;
-      const next = i < barCount - 1 ? clamp01(peaks[i + 1] || 0) : current;
-      // Weighted average: current gets 60%, neighbors get 20% each
-      return current * 0.6 + prev * 0.2 + next * 0.2;
-    };
-    
-    // Color intensity based on amplitude - calm and smooth
-    const getColorForAmp = (amp: number, isPlayed: boolean) => {
-      if (isPlayed) {
-        // Played section: subtle variation for calm appearance
-        // Base color: muted blue-gray (#6b8fa3 = rgb(107, 143, 163))
-        const baseR = 107;
-        const baseG = 143;
-        const baseB = 163;
-        // Very subtle intensity variation (85% to 100%)
-        const intensity = 0.85 + (amp * 0.15);
-        const r = Math.floor(baseR * intensity);
-        const g = Math.floor(baseG * intensity);
-        const b = Math.floor(baseB * intensity);
-        // Smooth opacity variation (70% to 85%)
-        return `rgba(${r}, ${g}, ${b}, ${0.70 + amp * 0.15})`;
-      } else {
-        // Unplayed: very subtle, calm gray variation
-        const intensity = 0.20 + (amp * 0.08); // 20% to 28% opacity
-        return `rgba(180, 180, 190, ${intensity})`;
-      }
-    };
-    
+    // Optimized: batch similar bars together, skip gradients for performance
     const drawBars = (isPlayed: boolean) => {
+      // Group bars by color for batch drawing
+      ctx.beginPath();
+      
       for (let i = 0; i < barCount; i++) {
-        // Use smoothed amplitude for smoother transitions
         const rawAmp = clamp01(peaks[i] || 0);
-        const amp = smoothAmp(i);
+        // Simplified: use raw amplitude directly (smoothing was expensive)
+        const amp = rawAmp;
 
-        // Ensure minimum height so quiet sections are still visible
         const barH = Math.max(2, amp * cssHeight);
         const x = i * barW + gap / 2;
         const w = Math.max(0.5, barW - gap);
         const y = cssHeight - barH;
 
-        // Draw rounded bar (no shadow – flatter, cleaner look)
-        ctx.save();
-        drawRoundedRect(x, y, w, barH, cornerRadius);
-
-        // Color intensity varies with amplitude
-        const baseColor = getColorForAmp(rawAmp, isPlayed);
-
-        // Subtle gradient for smooth, calm appearance
-        const gradient = ctx.createLinearGradient(x, y, x, y + barH);
-        gradient.addColorStop(0, baseColor);
-        if (isPlayed) {
-          // Played: very subtle gradient (smooth transition)
-          const opacityStr = baseColor.match(/[\d\.]+\)$/)?.[0] || '0.75';
-          const opacity = parseFloat(opacityStr);
-          const bottomOpacity = Math.max(0.65, opacity - 0.08);
-          const bottomColor = baseColor.replace(/[\d\.]+\)$/, `${bottomOpacity})`);
-          gradient.addColorStop(1, bottomColor);
-        } else {
-          // Unplayed: minimal gradient for smoothness
-          const opacityStr = baseColor.match(/[\d\.]+\)$/)?.[0] || '0.24';
-          const opacity = parseFloat(opacityStr);
-          const bottomOpacity = Math.max(0.18, opacity - 0.04);
-          const bottomColor = baseColor.replace(/[\d\.]+\)$/, `${bottomOpacity})`);
-          gradient.addColorStop(1, bottomColor);
-        }
-        ctx.fillStyle = gradient;
-        ctx.fill();
-        ctx.restore();
+        // Simple rounded rect path (no gradient for performance)
+        const radius = Math.min(cornerRadius, w / 2, barH / 2);
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + w - radius, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+        ctx.lineTo(x + w, y + barH);
+        ctx.lineTo(x, y + barH);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
       }
+      
+      // Single fill for all bars of the same type
+      ctx.fillStyle = isPlayed 
+        ? 'rgba(107, 143, 163, 0.75)' 
+        : 'rgba(180, 180, 190, 0.24)';
+      ctx.fill();
     };
 
     // base layer (unplayed)

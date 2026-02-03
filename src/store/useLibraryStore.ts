@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Track, RekordboxLibrary, Playlist } from '../types/track';
 import { evaluateTagSmartlist, TagSmartlistRule, TagSmartlistMatchMode } from '../utils/customSmartlist';
+import { SearchIndex, buildSearchIndex, updateTrackInIndex, fastSearch } from '../utils/searchIndex';
 
 // Load genres from localStorage
 const loadGenresFromStorage = (): string[] => {
@@ -48,6 +49,7 @@ const saveTagCategoriesToStorage = (categories: string[]): void => {
 
 interface LibraryState {
   library: RekordboxLibrary | null;
+  searchIndex: SearchIndex | null;
   filteredTracks: Track[];
   selectedTrack: Track | null;
   selectedTracks: Set<string>;
@@ -105,6 +107,7 @@ interface LibraryState {
 
 export const useLibraryStore = create<LibraryState>((set, get) => ({
   library: null,
+  searchIndex: null,
   filteredTracks: [],
   selectedTrack: null,
   selectedTracks: new Set(),
@@ -127,7 +130,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     const genresList = Array.from(savedGenres).sort();
     saveGenresToStorage(genresList);
     
-    set({ library, selectedPlaylist: null, genres: genresList });
+    // Build search index for fast filtering
+    const searchIndex = buildSearchIndex(library.tracks);
+    
+    set({ library, searchIndex, selectedPlaylist: null, genres: genresList });
     // Filter tracks immediately after setting library
     const state = get();
     state.filterTracks();
@@ -139,12 +145,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   },
 
   updateTrack: (trackId: string, updates: Partial<Track>) => {
-    const { library, genres } = get();
+    const { library, genres, searchIndex } = get();
     if (!library) return;
 
     const updatedTracks = library.tracks.map((track) =>
       track.TrackID === trackId ? { ...track, ...updates } : track
     );
+
+    // Update search index for the modified track
+    if (searchIndex) {
+      const updatedTrack = updatedTracks.find(t => t.TrackID === trackId);
+      if (updatedTrack) {
+        updateTrackInIndex(searchIndex, updatedTrack);
+      }
+    }
 
     // Update genres list if genre was added/updated
     if (updates.Genre !== undefined) {
@@ -204,51 +218,40 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   },
 
   filterTracks: () => {
-    const { library, searchQuery, selectedPlaylist, showMissingOnly } = get();
+    const { library, searchIndex, searchQuery, selectedPlaylist, showMissingOnly } = get();
     if (!library) {
       set({ filteredTracks: [] });
       return;
     }
 
-    // Optimize: Single pass filtering instead of multiple passes
-    const query = searchQuery.trim().toLowerCase();
+    const query = searchQuery.trim();
     const hasQuery = query.length > 0;
     const playlistTrackIds = selectedPlaylist && selectedPlaylist.Type !== '0' 
       ? new Set(selectedPlaylist.Entries || [])
       : null;
     const hasPlaylistFilter = playlistTrackIds !== null;
 
-    // Single pass filtering for better performance
+    // Start with base track set
+    let baseSet = library.tracks;
 
-    const filtered = library.tracks.filter((track) => {
-      // Filter by playlist (if applicable)
-      if (hasPlaylistFilter && !playlistTrackIds!.has(track.TrackID)) {
-        return false;
-      }
+    // Apply playlist filter first (reduces search space)
+    if (hasPlaylistFilter) {
+      baseSet = baseSet.filter(track => playlistTrackIds!.has(track.TrackID));
+    }
 
-      // Filter by missing tracks (if enabled)
-      if (showMissingOnly && track.isMissing !== true) {
-        return false;
-      }
+    // Apply missing filter
+    if (showMissingOnly) {
+      baseSet = baseSet.filter(track => track.isMissing === true);
+    }
 
-      // Apply search filter (single pass with early exit)
-      if (hasQuery) {
-        const name = track.Name?.toLowerCase() || '';
-        const artist = track.Artist?.toLowerCase() || '';
-        const album = track.Album?.toLowerCase() || '';
-        const genre = track.Genre?.toLowerCase() || '';
-        const key = track.Key?.toLowerCase() || '';
-        const tags = (track as any).tags?.map((t: any) => `${t.category || ''} ${t.name || ''}`.toLowerCase()).join(' ') || '';
-        
-        // Early exit if any field matches
-        if (!(name.includes(query) || artist.includes(query) || 
-              album.includes(query) || genre.includes(query) || key.includes(query) || tags.includes(query))) {
-          return false;
-        }
-      }
-
-      return true;
-    });
+    // Apply search filter using fast indexed search
+    let filtered: Track[];
+    if (hasQuery) {
+      // Use the high-performance search index
+      filtered = fastSearch(searchIndex, baseSet, query);
+    } else {
+      filtered = baseSet;
+    }
 
     set({ filteredTracks: filtered });
   },

@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
-import { FolderOpen, ArrowUp, Settings } from 'lucide-react';
+import { FolderOpen, ArrowUp, Settings, Play, Save, Check } from 'lucide-react';
 import MoodPillTags, { parseMoodString, serializeMoods } from './MoodPillTags';
 import { Track } from '../types/track';
 import QuickTagPlayer from './QuickTagPlayer';
-import ReactiveButton from 'reactive-button';
 import Rating from './ui/Rating';
 import { toast } from 'sonner';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -483,60 +482,65 @@ export default function QuickTagScreen() {
     <div className="quicktag-layout">
       <div className="quicktag-main">
         <div className="quicktag-toolbar">
-          <button className="btn btn-secondary" onClick={handleChooseFolder} disabled={loading}>
-            <FolderOpen size={18} />
-            Choose folder…
-          </button>
-          <button
-            className="quicktag-up-btn"
-            onClick={handleGoUpFolder}
-            disabled={!folderPath || loading}
-            title="Go up one folder"
-          >
-            <ArrowUp size={14} />
-          </button>
-          <div style={{ marginLeft: '8px' }}>
-            <ReactiveButton
-              buttonState="idle"
-              color={autoPlayOnSelect ? 'green' : 'red'}
-              idleText={autoPlayOnSelect ? 'Auto play ON' : 'Auto play OFF'}
+          <div className="quicktag-toolbar-group">
+            <button className="quicktag-btn" onClick={handleChooseFolder} disabled={loading}>
+              <FolderOpen size={16} />
+              <span>Choose folder</span>
+            </button>
+            <button
+              className="quicktag-btn-icon"
+              onClick={handleGoUpFolder}
+              disabled={!folderPath || loading}
+              title="Go up one folder"
+            >
+              <ArrowUp size={16} />
+            </button>
+          </div>
+
+          <div className="quicktag-toolbar-divider" />
+
+          <div className="quicktag-toolbar-group">
+            <button
+              className={`quicktag-toggle ${autoPlayOnSelect ? 'active' : ''}`}
               onClick={() => setAutoPlayOnSelect((v) => !v)}
-              rounded
-              size="small"
-            />
-          </div>
-          <div style={{ marginLeft: '8px' }} title="When on, changing the star rating saves to file immediately (no Shift+S needed)">
-            <ReactiveButton
-              buttonState="idle"
-              color={autoSaveRating ? 'green' : 'red'}
-              idleText={autoSaveRating ? 'Auto-save rating ON' : 'Auto-save rating OFF'}
+              title="Auto play when selecting a track"
+            >
+              {autoPlayOnSelect && <Play size={14} fill="currentColor" />}
+              <span>Auto Play</span>
+            </button>
+
+            <button
+              className={`quicktag-toggle ${autoSaveRating ? 'active' : ''}`}
               onClick={() => setAutoSaveRating((v) => !v)}
-              rounded
-              size="small"
-            />
+              title="When on, changing the star rating saves to file immediately"
+            >
+              {autoSaveRating && <Check size={14} strokeWidth={3} />}
+              <span>Auto Save</span>
+            </button>
           </div>
-          <button
-            type="button"
-            className="btn btn-secondary quicktag-settings-btn"
-            onClick={() => setSettingsOpen(true)}
-            title="Quick Tag settings"
-          >
-            <Settings size={18} />
-            Settings
-          </button>
+
+          <div className="quicktag-toolbar-spacer" />
 
           {folderPath && (
             <div className="quicktag-path-search">
-              <span className="quicktag-path">{selectedFolderPath || folderPath}</span>
               <input
                 className="quicktag-search-input"
                 type="text"
-                placeholder="Search in folder…"
+                placeholder="Search tracks..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
           )}
+
+          <button
+            type="button"
+            className="quicktag-btn-icon"
+            onClick={() => setSettingsOpen(true)}
+            title="Quick Tag settings"
+          >
+            <Settings size={18} />
+          </button>
         </div>
 
         {error && <div className="quicktag-error">{error}</div>}
@@ -544,31 +548,41 @@ export default function QuickTagScreen() {
         <div className="quicktag-content-row">
           {/* Left: folder browser */}
           <div className="quicktag-folder-sidebar">
-            {!folderPath && !loading && (
-              <div className="quicktag-empty">Choose a root folder to browse tracks.</div>
-            )}
-            {folderPath && (
-              <button
-                className="quicktag-folder-row quicktag-folder-parent"
-                onClick={handleGoUpFolder}
-                disabled={loading}
-              >
-                <span className="quicktag-folder-toggle-spacer">
-                  <ArrowUp size={12} />
-                </span>
-                <span className="quicktag-folder-name">Parent folder</span>
-              </button>
-            )}
-            {folderTree && (
-              <div className="quicktag-folder-tree">
-                <FolderTreeItem
-                  node={folderTree}
-                  level={0}
-                  selectedPath={selectedFolderPath}
-                  onSelect={(p) => setSelectedFolderPath(p)}
-                />
-              </div>
-            )}
+            <div className="quicktag-panel-header">
+              <h3>LIBRARY</h3>
+            </div>
+            <div className="quicktag-panel-content">
+              {!folderPath && !loading && (
+                <div className="quicktag-empty-sidebar">
+                  <p>No folder selected</p>
+                  <button className="quicktag-btn-small" onClick={handleChooseFolder}>
+                    Browse...
+                  </button>
+                </div>
+              )}
+              {folderPath && (
+                <button
+                  className="quicktag-folder-row quicktag-folder-parent"
+                  onClick={handleGoUpFolder}
+                  disabled={loading}
+                >
+                  <span className="quicktag-folder-toggle-spacer">
+                    <ArrowUp size={12} />
+                  </span>
+                  <span className="quicktag-folder-name">Parent folder</span>
+                </button>
+              )}
+              {folderTree && (
+                <div className="quicktag-folder-tree">
+                  <FolderTreeItem
+                    node={folderTree}
+                    level={0}
+                    selectedPath={selectedFolderPath}
+                    onSelect={(p) => setSelectedFolderPath(p)}
+                  />
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Center: folder contents / track table */}
@@ -676,81 +690,75 @@ export default function QuickTagScreen() {
 
           {/* Right: reserved space for later */}
           <div className="quicktag-right-panel">
-            {selectedTrack ? (
-              <div style={{ padding: '20px' }}>
-                <h3 style={{ margin: '0 0 4px', fontSize: '14px', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {selectedTrack.Name}
-                </h3>
-                <p style={{ margin: '0 0 20px', fontSize: '12px', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {selectedTrack.Artist}
-                </p>
+            <div className="quicktag-panel-header">
+              <h3>TAG EDITOR</h3>
+            </div>
+            <div className="quicktag-panel-content">
+              {selectedTrack ? (
+                <div className="quicktag-detail-content">
+                  <div className="quicktag-detail-header">
+                    <h3 className="quicktag-detail-title" title={selectedTrack.Name}>
+                      {selectedTrack.Name}
+                    </h3>
+                    <p className="quicktag-detail-subtitle" title={selectedTrack.Artist}>
+                      {selectedTrack.Artist}
+                    </p>
+                  </div>
 
-                <div style={{ marginBottom: '24px' }}>
-                  <h4 style={{ fontSize: '10px', textTransform: 'uppercase', color: '#666', marginBottom: '10px' }}>
-                    Rating
-                  </h4>
-                  <Rating
-                    size="medium"
-                    max={5}
-                    value={popmByteToStars(selectedTrack.ratingByte ?? (selectedTrack.Rating ? Number(selectedTrack.Rating) : 0))}
-                    onChange={(newStars) => {
-                      const ratingByte = starsToPopmByte(newStars);
-                      updateRatingForTrack(selectedTrack.TrackID, ratingByte);
-                      if (autoSaveRating && ratingByte > 0) {
-                        saveRatingToFile(selectedTrack, ratingByte);
-                      }
-                    }}
-                  />
-                </div>
+                  <div className="quicktag-detail-section">
+                    <h4 className="quicktag-section-title">Rating</h4>
+                    <div className="quicktag-detail-rating">
+                      <Rating
+                        size="medium"
+                        max={5}
+                        value={popmByteToStars(selectedTrack.ratingByte ?? (selectedTrack.Rating ? Number(selectedTrack.Rating) : 0))}
+                        onChange={(newStars) => {
+                          const ratingByte = starsToPopmByte(newStars);
+                          updateRatingForTrack(selectedTrack.TrackID, ratingByte);
+                          if (autoSaveRating && ratingByte > 0) {
+                            saveRatingToFile(selectedTrack, ratingByte);
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
 
-                <div style={{ marginBottom: '24px' }}>
-                  <h4 style={{ fontSize: '10px', textTransform: 'uppercase', color: '#666', marginBottom: '10px' }}>
-                    Moods & Vibe
-                  </h4>
-                  <MoodPillTags
-                    selectedMoods={parseMoodString(selectedTrack.Mood)}
-                    onToggle={handleMoodToggle}
-                    disabled={pendingSave}
-                  />
-                </div>
+                  <div className="quicktag-detail-section">
+                    <h4 className="quicktag-section-title">Moods & Vibe</h4>
+                    {/* Category Selector integrated in MoodPillTags or custom here if needed */}
+                    <MoodPillTags
+                      selectedMoods={parseMoodString(selectedTrack.Mood)}
+                      onToggle={handleMoodToggle}
+                      disabled={pendingSave}
+                    />
+                  </div>
 
-                <div style={{ marginBottom: '24px' }}>
-                  <h4 style={{ fontSize: '10px', textTransform: 'uppercase', color: '#666', marginBottom: '10px' }}>
-                    Comments
-                  </h4>
-                  <textarea
-                    className="quicktag-comments-input"
-                    style={{
-                      width: '100%',
-                      minHeight: '80px',
-                      background: 'rgba(255,255,255,0.04)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: '6px',
-                      padding: '8px',
-                      color: '#fff',
-                      fontSize: '12px',
-                      resize: 'vertical'
-                    }}
-                    value={selectedTrack.Comments || ''}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setSelectedTrack(prev => prev ? { ...prev, Comments: val } : null);
-                    }}
-                    onBlur={() => {
-                      // Save on blur if changed
-                      if (selectedTrack && selectedTrack.Location) {
-                        // TODO: Implement save comments
-                         window.electronAPI?.audioTagsSetComments?.(selectedTrack.Location, selectedTrack.Comments || '');
-                      }
-                    }}
-                  />
+                  <div className="quicktag-detail-section">
+                    <h4 className="quicktag-section-title">Comments</h4>
+                    <textarea
+                      className="quicktag-comments-input"
+                      value={selectedTrack.Comments || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSelectedTrack(prev => prev ? { ...prev, Comments: val } : null);
+                      }}
+                      onBlur={() => {
+                        // Save on blur if changed
+                        if (selectedTrack && selectedTrack.Location) {
+                          // TODO: Implement save comments
+                           window.electronAPI?.audioTagsSetComments?.(selectedTrack.Location, selectedTrack.Comments || '');
+                        }
+                      }}
+                      placeholder="Add comments..."
+                    />
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#444', fontSize: '13px' }}>
-                Select a track to edit
-              </div>
-            )}
+              ) : (
+                <div className="quicktag-detail-empty">
+                  Select a track to edit
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

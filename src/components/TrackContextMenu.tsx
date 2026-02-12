@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { CheckSquare, XSquare, Music, RotateCcw, Trash2, FolderOpen } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { CheckSquare, XSquare, Music, RotateCcw, Trash2, FolderOpen, Copy, Clipboard } from 'lucide-react';
 
 interface TrackContextMenuProps {
   x: number;
@@ -35,6 +35,7 @@ export default function TrackContextMenu({
   const isSingleTrack = !!track;
   const operationCount = isSingleTrack ? 1 : selectedCount;
   const menuRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -52,11 +53,37 @@ export default function TrackContextMenu({
     document.addEventListener('mousedown', handleClickOutside);
     document.addEventListener('keydown', handleEscape);
 
+    // Adjust position if menu goes off screen
+    if (menuRef.current) {
+      const rect = menuRef.current.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+
+      if (rect.right > viewportWidth) {
+        menuRef.current.style.left = `${viewportWidth - rect.width - 10}px`;
+      }
+      if (rect.bottom > viewportHeight) {
+        menuRef.current.style.top = `${viewportHeight - rect.height - 10}px`;
+      }
+    }
+
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleEscape);
     };
   }, [onClose]);
+
+  const handleCopy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => {
+        onClose();
+      }, 200);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
 
   return (
     <div
@@ -69,6 +96,29 @@ export default function TrackContextMenu({
         <span className="context-menu-subtitle">{operationCount} {operationCount === 1 ? 'track' : 'tracks'}</span>
       </div>
       <div className="context-menu-separator" />
+
+      {track && (
+        <>
+          <button
+            className="context-menu-item"
+            onClick={() => handleCopy(`${track.Artist || ''} - ${track.Name || ''}`)}
+          >
+            <Copy size={16} />
+            <span>Copy "{track.Artist} - {track.Name}"</span>
+            {copied && <span className="badge">Copied!</span>}
+          </button>
+          
+           <button
+            className="context-menu-item"
+            onClick={() => handleCopy(track.Location || '')}
+          >
+            <Clipboard size={16} />
+            <span>Copy File Path</span>
+          </button>
+
+          <div className="context-menu-separator" />
+        </>
+      )}
 
       {isSingleTrack && track?.Location && window.electronAPI?.showItemInFolder && (
         <button

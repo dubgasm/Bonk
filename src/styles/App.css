@@ -499,13 +499,34 @@ body {
 
 .search-input {
   width: 100%;
-  padding: 10px 12px 10px 40px;
+  padding: 10px 36px 10px 40px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text-primary);
   font-size: 14px;
   transition: border-color 0.15s;
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  border-radius: 50%;
+  transition: all 0.15s;
+}
+
+.search-clear-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
 }
 
 .search-input:focus {
@@ -3342,7 +3363,7 @@ body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 220px minmax(0, 1.8fr) 0.4fr; /* slimmer right sidebar */
+  grid-template-columns: 240px minmax(0, 1fr) 300px;
   gap: 12px;
 }
 
@@ -3350,16 +3371,51 @@ body {
   border-radius: 8px;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  padding: 4px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.quicktag-right-panel {
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.quicktag-panel-header {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.quicktag-panel-header h3 {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.quicktag-panel-content {
+  flex: 1;
   overflow-y: auto;
+  min-height: 0;
 }
 
 .quicktag-folder-tree {
-  font-size: 12px;
+  padding: 8px;
+  font-size: 13px;
 }
 
 .quicktag-folder-node {
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
 
 .quicktag-folder-row {
@@ -3369,51 +3425,265 @@ body {
   color: var(--text-secondary);
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
+  gap: 8px;
+  padding: 6px 10px;
   border-radius: 4px;
   cursor: pointer;
+  font-size: 13px;
+  transition: all 0.1s ease;
 }
 
-.quicktag-folder-row-active {
-  background: rgba(0, 200, 255, 0.12);
+.quicktag-folder-row:hover {
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
-.quicktag-folder-parent {
-  margin-bottom: 4px;
+.quicktag-folder-row-active {
+  background: rgba(29, 185, 84, 0.12);
+  color: var(--accent);
   font-weight: 500;
 }
 
+.quicktag-folder-row-active:hover {
+  background: rgba(29, 185, 84, 0.18);
+}
+
+.quicktag-folder-parent {
+  margin: 8px 8px 4px;
+  width: auto;
+  font-weight: 600;
+  border: 1px dashed var(--border);
+}
+
 .quicktag-folder-toggle {
-  font-size: 11px;
-  opacity: 0.7;
+  font-size: 10px;
+  opacity: 0.5;
+  width: 12px;
+  display: flex;
+  justify-content: center;
 }
 
 .quicktag-folder-toggle-spacer {
-  width: 10px;
+  width: 12px;
 }
 
 .quicktag-folder-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  text-align: left;
 }
 
 .quicktag-folder-children {
-  margin-left: 2px;
+  margin-left: 0; /* flattened visually, indentation handled by padding */
 }
 
-.quicktag-center-panel {
+/* Quick Tag Toolbar Improvements */
+.quicktag-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quicktag-toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.quicktag-toolbar-spacer {
+  flex: 1;
+}
+
+.quicktag-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  height: 32px;
+}
+
+.quicktag-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+.quicktag-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.quicktag-btn-small {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.quicktag-btn-small:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.quicktag-btn-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.quicktag-btn-icon:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.quicktag-btn-icon:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.quicktag-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  height: 32px;
+}
+
+.quicktag-toggle:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.quicktag-toggle.active {
+  background: rgba(29, 185, 84, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.quicktag-toggle.active:hover {
+  background: rgba(29, 185, 84, 0.25);
+}
+
+/* Right Detail Panel Internals */
+.quicktag-detail-content {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  height: 100%;
+  padding: 20px;
 }
 
-.quicktag-right-panel {
-  border-radius: 8px;
-  background: transparent;
-  border: 1px dashed rgba(255, 255, 255, 0.1);
+.quicktag-detail-header {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.quicktag-detail-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quicktag-detail-subtitle {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quicktag-detail-section {
+  margin-bottom: 24px;
+}
+
+.quicktag-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.quicktag-comments-input {
+  width: 100%;
+  min-height: 100px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  resize: vertical;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+
+.quicktag-comments-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.quicktag-detail-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 20px;
+  text-align: center;
+}
+
+.quicktag-empty-sidebar {
+  padding: 24px 16px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .quicktag-tracklist {
@@ -3581,6 +3851,7 @@ body {
 .quicktag-player-btn:hover {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.22);
+  transform: none;
 }
 
 .quicktag-player-btn:active {

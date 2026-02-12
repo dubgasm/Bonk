@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, memo } from 'react';
 import { CanvasWaveform } from './CanvasWaveform';
 
 interface LazyWaveformProps {
@@ -10,7 +10,7 @@ interface LazyWaveformProps {
 // Global cache for waveform peaks to prevent re-fetching on scroll
 const waveformCache = new Map<string, number[]>();
 
-export default function LazyWaveform({ trackId, location, height = 24 }: LazyWaveformProps) {
+export default memo(function LazyWaveform({ trackId, location, height = 24 }: LazyWaveformProps) {
   const [peaks, setPeaks] = useState<number[] | null>(waveformCache.get(trackId) || null);
   const [loading, setLoading] = useState(!peaks);
 
@@ -92,4 +92,4 @@ export default function LazyWaveform({ trackId, location, height = 24 }: LazyWav
       />
     </div>
   );
-}
+});

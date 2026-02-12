@@ -12,7 +12,7 @@
 .mood-category {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .mood-category-header {
@@ -22,7 +22,7 @@
   cursor: pointer;
   padding: 4px 0;
   user-select: none;
-  opacity: 0.8;
+  opacity: 0.9;
   transition: opacity 0.2s ease;
 }
 
@@ -36,12 +36,12 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin: 0;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
 }
 
 .mood-category-toggle {
   font-size: 10px;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
 }
 
 .mood-pills-row {
@@ -53,10 +53,10 @@
 
 .mood-pill {
   padding: 6px 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-primary, #fff);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -66,9 +66,9 @@
 }
 
 .mood-pill:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
-  transform: translateY(-1px);
+  background: var(--bg-hover);
   border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
 }
 
 .mood-pill:active:not(:disabled) {
@@ -76,135 +76,20 @@
 }
 
 .mood-pill-active {
-  background: linear-gradient(135deg, #e91e63 0%, #d81b60 100%);
-  border-color: #e91e63;
-  color: white;
+  background: rgba(29, 185, 84, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(233, 30, 99, 0.3);
 }
 
 .mood-pill-active:hover:not(:disabled) {
-  background: linear-gradient(135deg, #f06292 0%, #e91e63 100%);
-  box-shadow: 0 4px 12px rgba(233, 30, 99, 0.4);
+  background: rgba(29, 185, 84, 0.25);
+  box-shadow: 0 4px 12px rgba(29, 185, 84, 0.2);
 }
 
 .mood-pill:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-/* Vibe Filter Styles */
-.vibe-filter-content {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 12px;
-}
-
-.vibe-filter-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.vibe-filter-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.03);
-  transition: background 0.2s ease;
-}
-
-.vibe-filter-section-header:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.vibe-filter-section-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary, #fff);
-}
-
-.vibe-icon {
-  font-size: 14px;
-}
-
-.vibe-filter-items {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-left: 8px;
-  animation: slideDown 0.2s ease-out;
-}
-
-.vibe-checkbox {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
-  cursor: pointer;
-  border-radius: 4px;
-  transition: background 0.15s ease;
-  font-size: 13px;
-  color: var(--text-secondary, #ccc);
-}
-
-.vibe-checkbox:hover {
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-primary, #fff);
-}
-
-.vibe-checkbox input[type="checkbox"] {
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 3px;
-  background: transparent;
-  cursor: pointer;
-  position: relative;
-  transition: all 0.2s ease;
-}
-
-.vibe-checkbox input[type="checkbox"]:checked {
-  background: #e91e63;
-  border-color: #e91e63;
-}
-
-.vibe-checkbox input[type="checkbox"]:checked::after {
-  content: '✓';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 10px;
-  color: white;
-  font-weight: bold;
-}
-
-.add-custom-note {
-  margin-top: 8px;
-  padding: 8px;
-  background: transparent;
-  border: 1px dashed rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
-  color: var(--text-secondary, #888);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  width: 100%;
-}
-
-.add-custom-note:hover {
-  border-color: rgba(255, 255, 255, 0.4);
-  color: var(--text-primary, #fff);
-  background: rgba(255, 255, 255, 0.02);
 }
 
 @keyframes slideDown {

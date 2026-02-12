@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { Search } from 'lucide-react';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useAutoTagStore } from '../store/useAutoTagStore';
@@ -7,6 +8,7 @@ import { useColumnStore } from '../store/useColumnStore';
 import TrackContextMenu from './TrackContextMenu';
 import TrackTableToolbar from './TrackTableToolbar';
 import TrackTableHeader from './TrackTableHeader';
+import { TrackTableRow } from './TrackTableRow';
 import TagsModal from './TagsModal';
 import TagSelectorModal from './TagSelectorModal';
 import BatchTagUpdateModal from './BatchTagUpdateModal';
@@ -19,8 +21,6 @@ import RemoveFromPlaylistModal from './RemoveFromPlaylistModal';
 import SmartFixesModal, { SmartFixConfig } from './SmartFixesModal';
 import DeleteTracksModal from './DeleteTracksModal';
 const AudioFeaturesWizard = lazy(() => import('./AudioFeaturesWizard'));
-import LazyAlbumArt from './LazyAlbumArt';
-import LazyWaveform from './LazyWaveform';
 import { Track } from '../types/track';
 
 // Constants for virtual scrolling
@@ -114,18 +114,18 @@ export default function TrackTable() {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }, []);
 
-  const handleRowClick = (track: Track, e: React.MouseEvent) => {
-    const idx = filteredTracks.findIndex((t) => t.TrackID === track.TrackID);
+  const handleRowClick = (track: Track, index: number, e: React.MouseEvent) => {
+    const idx = index;
     if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
       setSelectedTrack(track);
       setAuditionTrackId(track.TrackID);
-      setLastClickedIndex(idx >= 0 ? idx : null);
+      setLastClickedIndex(idx);
       return;
     }
     if (e.shiftKey && (e.ctrlKey || e.metaKey)) {
-      if (lastClickedIndex === null || idx < 0) {
+      if (lastClickedIndex === null) {
         toggleTrackSelection(track.TrackID);
-        setLastClickedIndex(idx >= 0 ? idx : null);
+        setLastClickedIndex(idx);
         return;
       }
       const start = Math.min(lastClickedIndex, idx);
@@ -138,12 +138,12 @@ export default function TrackTable() {
     }
     if (e.ctrlKey || e.metaKey) {
       toggleTrackSelection(track.TrackID);
-      setLastClickedIndex(idx >= 0 ? idx : null);
+      setLastClickedIndex(idx);
       return;
     }
     setSelectedTrack(track);
     setAuditionTrackId(null);
-    setLastClickedIndex(idx >= 0 ? idx : null);
+    setLastClickedIndex(idx);
   };
 
   const handleContextMenu = (track: Track, e: React.MouseEvent) => {
@@ -192,35 +192,7 @@ export default function TrackTable() {
   };
 
   // Memoize renderEditableCell to prevent unnecessary re-renders
-  const renderEditableCell = useCallback((track: Track, field: string, value: string, className?: string) => {
-    const isEditing = editingCell?.trackId === track.TrackID && editingCell?.field === field;
-    
-    if (isEditing) {
-      return (
-        <div className={className} onClick={(e) => e.stopPropagation()}>
-          <input
-            type="text"
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onBlur={handleCellBlur}
-            onKeyDown={handleCellKeyDown}
-            autoFocus
-            className="cell-editor"
-          />
-        </div>
-      );
-    }
-    
-    return (
-      <div
-        className={className}
-        onDoubleClick={() => handleCellDoubleClick(track, field)}
-        title="Double-click to edit"
-      >
-        {value || '-'}
-      </div>
-    );
-  }, [editingCell, editValue, handleCellBlur, handleCellKeyDown, handleCellDoubleClick]);
+  // Note: renderEditableCell has been moved to TrackTableRow component logic
 
   const handleDetectKeys = async (track?: typeof filteredTracks[0]) => {
     // If a specific track is provided (right-click), use it; otherwise use selected tracks
@@ -456,63 +428,12 @@ export default function TrackTable() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [selectedTracks, selectAll, clearSelection, handleDetectKeys, handleDiscardChanges]);
 
-  // Removed debug logs for better performance
+  const handleTagClick = useCallback((track: Track, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setTagSelectorTrack(track);
+  }, []);
 
-// Helper to render cell based on column ID
-const renderCell = (track: Track, columnId: string) => {
-  switch (columnId) {
-    case 'checkbox':
-      // Handled separately in the row render for now, or we can move it here
-      return null;
-    case 'art':
-      return (
-        <div className="album-art-cell">
-          <LazyAlbumArt
-            trackId={track.TrackID}
-            location={track.Location}
-            albumArt={(track as any).AlbumArt}
-            size={fontSize === 'small' ? 32 : fontSize === 'large' ? 40 : 36}
-          />
-        </div>
-      );
-    case 'title': return renderEditableCell(track, 'Name', track.Name || 'Unknown', 'track-name');
-    case 'artist': return renderEditableCell(track, 'Artist', track.Artist || 'Unknown Artist');
-    case 'album': return renderEditableCell(track, 'Album', track.Album || '');
-    case 'genre': return renderEditableCell(track, 'Genre', track.Genre || '');
-    case 'bpm': return renderEditableCell(track, 'AverageBpm', track.AverageBpm ? parseFloat(track.AverageBpm).toFixed(1) : '');
-    case 'key': return renderEditableCell(track, 'Key', track.Key || '');
-    case 'rating': return <div>{track.Rating ? `${track.Rating}★` : '-'}</div>; // Simple display for now
-    case 'time': return <div>{formatTime(track.TotalTime)}</div>;
-    case 'year': return renderEditableCell(track, 'Year', track.Year || '');
-    case 'tags':
-      return (
-        <div
-          className="tags-cell"
-          title="Click to edit tags"
-          onClick={(e) => {
-            e.stopPropagation();
-            setTagSelectorTrack(track);
-          }}
-        >
-          {(track.tags || []).length
-            ? track.tags!.map((t) => t.name).join(', ')
-            : 'Add tags'}
-        </div>
-      );
-    case 'waveform':
-      return (
-        <div style={{ width: '100%', padding: '0 4px' }}>
-          <LazyWaveform
-            trackId={track.TrackID}
-            location={track.Location}
-            height={24}
-          />
-        </div>
-      );
-    default:
-      return null;
-  }
-};
+  // Removed debug logs for better performance
 
   return (
     <div className="track-table-wrapper" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -605,47 +526,36 @@ const renderCell = (track: Track, columnId: string) => {
                   const isMultiSelected = selectedTracks.has(track.TrackID);
 
                   return (
-                    <div
+                    <TrackTableRow
                       key={track.TrackID || virtualRow.index}
+                      track={track}
+                      index={virtualRow.index}
                       style={{
-                        display: 'grid',
-                        gridTemplateColumns: gridTemplate,
-                        alignItems: 'center',
-                        padding: '0 8px',
-                        boxSizing: 'border-box',
                         position: 'absolute',
                         top: 0,
                         left: 0,
                         width: '100%',
                         height: `${virtualRow.size}px`,
                         transform: `translateY(${virtualRow.start}px)`,
-                        fontSize: fontSize === 'small' ? '12px' : fontSize === 'large' ? '14px' : '13px',
+                        gridTemplateColumns: gridTemplate,
                       }}
-                      className={`track-row ${isSelected ? 'selected' : ''} ${
-                        isMultiSelected ? 'multi-selected' : ''
-                      } ${track.isMissing ? 'missing-track' : ''}`}
-                      onClick={(e) => handleRowClick(track, e)}
-                      onContextMenu={(e) => handleContextMenu(track, e)}
-                      draggable={!track.isMissing}
-                      onDragStart={(e) => handleDragStart(e, track)}
-                      onDragEnd={(e) => { try { e.stopPropagation(); } catch (_) {} }}
-                    >
-                      {visibleColumns.map(col => (
-                        <div key={col.id} style={{ overflow: 'hidden', height: '100%', display: 'flex', alignItems: 'center' }}>
-                          {col.id === 'checkbox' ? (
-                            <div onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="checkbox"
-                                checked={isMultiSelected}
-                                onChange={() => toggleTrackSelection(track.TrackID)}
-                              />
-                            </div>
-                          ) : (
-                            renderCell(track, col.id)
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                      isSelected={isSelected}
+                      isMultiSelected={isMultiSelected}
+                      visibleColumns={visibleColumns}
+                      fontSize={fontSize}
+                      editingCell={editingCell}
+                      editValue={editValue}
+                      onRowClick={handleRowClick}
+                      onContextMenu={handleContextMenu}
+                      onDragStart={handleDragStart}
+                      onToggleSelection={toggleTrackSelection}
+                      onCellDoubleClick={handleCellDoubleClick}
+                      onCellBlur={handleCellBlur}
+                      onCellKeyDown={handleCellKeyDown}
+                      onEditValueChange={setEditValue}
+                      onTagClick={handleTagClick}
+                      formatTime={formatTime}
+                    />
                   );
                 })}
               </div>
@@ -653,8 +563,40 @@ const renderCell = (track: Track, columnId: string) => {
           </div>
         )}
         {!filteredTracks.length && (
-          <div className="empty-state">
-            <p>No tracks found</p>
+          <div className="empty-state" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '40px', color: 'var(--text-secondary)' }}>
+            {searchQuery ? (
+              <>
+                <div style={{ marginBottom: 16 }}>
+                  <Search size={48} style={{ opacity: 0.2 }} />
+                </div>
+                <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px', color: 'var(--text-primary)' }}>No results found</h3>
+                <p>No tracks match "{searchQuery}"</p>
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={() => setSearchQuery('')}
+                  style={{ marginTop: 16 }}
+                >
+                  Clear Search
+                </button>
+              </>
+            ) : showMissingOnly ? (
+              <>
+                <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px', color: 'var(--text-primary)' }}>No missing tracks</h3>
+                <p>All tracks in your library can be located.</p>
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={() => setShowMissingOnly(false)}
+                  style={{ marginTop: 16 }}
+                >
+                  Show All Tracks
+                </button>
+              </>
+            ) : (
+              <>
+                <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px', color: 'var(--text-primary)' }}>No tracks found</h3>
+                <p>Drag and drop files or folders to get started.</p>
+              </>
+            )}
           </div>
         )}
       </div>

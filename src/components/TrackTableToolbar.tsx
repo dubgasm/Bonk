@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Music, RotateCcw, CheckSquare, XSquare, AlertTriangle, Copy, FileText, FileAudio, MapPin, Zap, Tag, Disc, Trash2, ChevronDown, Sparkles, Activity } from 'lucide-react';
+import { Music, RotateCcw, CheckSquare, XSquare, AlertTriangle, Copy, FileText, FileAudio, MapPin, Zap, Tag, Disc, Trash2, ChevronDown, Sparkles, Activity, Type } from 'lucide-react';
+import { useColumnStore } from '../store/useColumnStore';
 
 interface TrackTableToolbarProps {
   selectedCount: number;
@@ -23,6 +24,8 @@ interface TrackTableToolbarProps {
   onAutoTag: () => void;
   onAudioFeatures: () => void;
 }
+
+import ColumnSelector from './ColumnSelector';
 
 export default function TrackTableToolbar({
   selectedCount,
@@ -50,6 +53,8 @@ export default function TrackTableToolbar({
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
 
+  const { cycleFontSize, fontSize } = useColumnStore();
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
@@ -69,26 +74,37 @@ export default function TrackTableToolbar({
             <span className="missing-count"> • {missingCount} missing</span>
           )}
         </span>
+        
+        <div className="toolbar-separator" />
+        
+        <ColumnSelector />
+
+        <button className="btn btn-sm btn-secondary" onClick={cycleFontSize} title={`Font Size: ${fontSize}`}>
+          <Type size={14} />
+        </button>
       </div>
 
       <div className="track-toolbar-actions">
         <button className="btn btn-sm btn-primary" onClick={onDetectKeys} disabled={!hasSelection} title="Detect Key (⌘K)">
-          <Music size={16} />
+          <Music size={14} />
           <span>Keys</span>
         </button>
-        <button className="btn btn-sm" onClick={onAutoTag} disabled={!hasSelection} title="Auto Tag">
-          <Sparkles size={16} />
+        
+        <div className="toolbar-separator" />
+        
+        <button className="btn btn-sm btn-secondary" onClick={onAutoTag} disabled={!hasSelection} title="Auto Tag">
+          <Sparkles size={14} />
           <span>Auto Tag</span>
         </button>
-        <button className="btn btn-sm" onClick={onDiscardChanges} disabled={!hasSelection} title="Discard (⌘Z)">
-          <RotateCcw size={16} />
+        <button className="btn btn-sm btn-secondary" onClick={onDiscardChanges} disabled={!hasSelection} title="Discard (⌘Z)">
+          <RotateCcw size={14} />
           <span>Discard</span>
         </button>
 
         <div className="toolbar-separator" />
 
-        <button className="btn btn-sm" onClick={onCheckMissing} disabled={isCheckingMissing} title="Check Missing">
-          <AlertTriangle size={16} />
+        <button className="btn btn-sm btn-secondary" onClick={onCheckMissing} disabled={isCheckingMissing} title="Check Missing">
+          <AlertTriangle size={14} />
           <span>{isCheckingMissing ? '...' : 'Missing'}</span>
         </button>
 
@@ -133,7 +149,7 @@ export default function TrackTableToolbar({
         <div className="toolbar-separator" />
 
         <button className="btn btn-sm btn-danger" onClick={onDeleteSelected} disabled={!hasSelection} title="Delete">
-          <Trash2 size={16} />
+          <Trash2 size={14} />
           <span>Delete</span>
         </button>
 
@@ -142,7 +158,7 @@ export default function TrackTableToolbar({
           onClick={hasSelection ? onClearSelection : onSelectAll}
           title={hasSelection ? 'Clear (Esc)' : 'Select All (⌘A)'}
         >
-          {hasSelection ? <XSquare size={16} /> : <CheckSquare size={16} />}
+          {hasSelection ? <XSquare size={14} /> : <CheckSquare size={14} />}
           <span>{hasSelection ? 'Clear' : 'All'}</span>
         </button>
       </div>

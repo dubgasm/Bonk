@@ -52,6 +52,7 @@ console.log('  BEATPORT_PASSWORD:', process.env.BEATPORT_PASSWORD ? '✓ set' : 
 
 const execAsync = promisify(exec);
 const FFMPEG_PATH = process.env.FFMPEG_PATH || '/opt/homebrew/bin/ffmpeg';
+const FFPROBE_PATH = process.env.FFPROBE_PATH || '/opt/homebrew/bin/ffprobe';
 
 // Register custom protocol scheme before app is ready
 protocol.registerSchemesAsPrivileged([
@@ -533,17 +534,28 @@ ipcMain.handle('extract-album-art', async (_, location) => {
   try {
     // Parse file path from Location
     let filePath = location;
-    if (filePath.startsWith('file://localhost')) {
+    if (filePath.startsWith('file://localhost/')) {
+      filePath = filePath.replace('file://localhost/', '/');
+    } else if (filePath.startsWith('file://localhost')) {
       filePath = filePath.replace('file://localhost', '');
     } else if (filePath.startsWith('file://')) {
       filePath = filePath.replace('file://', '');
     }
     filePath = decodeURIComponent(filePath);
     
+    // Debug logging for album art extraction
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`🖼️ Extracting art for: ${location}`);
+      console.log(`   -> Resolved path: ${filePath}`);
+    }
+    
     // Check if file exists
     try {
       await fs.access(filePath);
-    } catch {
+    } catch (accessErr) {
+      if (process.env.NODE_ENV === 'development') {
+        console.error(`   ❌ File not accessible: ${accessErr.message}`);
+      }
       return null;
     }
     
@@ -569,7 +581,7 @@ ipcMain.handle('extract-album-art', async (_, location) => {
             reject(new Error('Invalid JSON from ffprobe'));
           }
         } else {
-          reject(new Error('ffprobe failed'));
+          reject(new Error(`ffprobe failed with code ${code}`));
         }
       });
       
@@ -582,6 +594,7 @@ ipcMain.handle('extract-album-art', async (_, location) => {
     );
     
     if (!hasArtwork) {
+      if (process.env.NODE_ENV === 'development') console.log('   ℹ️ No embedded artwork found');
       return null;
     }
     
@@ -606,7 +619,7 @@ ipcMain.handle('extract-album-art', async (_, location) => {
             if (code === 0) {
               resolveArt();
             } else {
-              rejectArt(new Error('FFmpeg art extraction failed'));
+              rejectArt(new Error(`FFmpeg art extraction failed with code ${code}`));
             }
           });
           
@@ -618,7 +631,7 @@ ipcMain.handle('extract-album-art', async (_, location) => {
               ffmpegProcess.kill('SIGTERM');
             }
             reject(new Error('Album art extraction timeout'));
-          }, 3000); // 3 second timeout for lazy loading
+          }, 5000); // Increased timeout to 5s to match write-tags logic
         })
       ]);
       
@@ -631,11 +644,13 @@ ipcMain.handle('extract-album-art', async (_, location) => {
       
       // Only return if file is reasonable size
       if (stats.size > 0 && stats.size < 5 * 1024 * 1024) { // Max 5MB
+        if (process.env.NODE_ENV === 'development') console.log(`   ✓ Art extracted: ${(stats.size / 1024).toFixed(1)} KB`);
         return `data:image/jpeg;base64,${artBuffer.toString('base64')}`;
       }
       
       return null;
     } catch (extractError) {
+      if (process.env.NODE_ENV === 'development') console.error(`   ❌ Extraction failed: ${extractError.message}`);
       // Cleanup on error
       if (ffmpegProcess && !ffmpegProcess.killed) {
         ffmpegProcess.kill('SIGKILL');
@@ -644,6 +659,7 @@ ipcMain.handle('extract-album-art', async (_, location) => {
       return null;
     }
   } catch (error) {
+    if (process.env.NODE_ENV === 'development') console.error(`   ❌ General error: ${error.message}`);
     return null;
   }
 });
@@ -5027,6 +5043,106 @@ ipcMain.handle('audioTags:setRatingByte', async (_, fileUrlOrPath, ratingByteRaw
     return { success: true, ratingByte };
   } catch (e) {
     console.error('❌ QuickTag: Failed to write POPM rating:', e.message);
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('audioTags:setMood', async (_, fileUrlOrPath, mood) => {
+  try {
+    console.log(`[QuickTag Electron] Setting Mood: "${mood}"`);
+    
+    // Normalize file path
+    let normalizedPath = fileUrlOrPath;
+    if (normalizedPath.startsWith('file://localhost/')) {
+      normalizedPath = normalizedPath.replace('file://localhost/', '/');
+    } else if (normalizedPath.startsWith('file://')) {
+      normalizedPath = normalizedPath.replace('file://', '');
+    }
+    normalizedPath = decodeURIComponent(normalizedPath);
+    
+    try {
+      await fs.access(normalizedPath);
+    } catch {
+      return { success: false, error: 'File not found' };
+    }
+    
+    const { File: TagFile, Id3v2UserTextInformationFrame, Id3v2Settings, TagTypes } = require('node-taglib-sharp');
+    
+    Id3v2Settings.defaultVersion = 3;
+    Id3v2Settings.forceDefaultVersion = true;
+    
+    const tagFile = TagFile.createFromPath(normalizedPath);
+    const id3Tag = tagFile.getTag(TagTypes.Id3v2, true);
+    
+    // Remove existing TXXX:MOOD frames
+    const framesToRemove = id3Tag.frames.filter(f => 
+      f instanceof Id3v2UserTextInformationFrame && (f.description || '').toUpperCase() === 'MOOD'
+    );
+    
+    framesToRemove.forEach(f => id3Tag.removeFrame(f));
+    
+    if (mood) {
+       const frame = new Id3v2UserTextInformationFrame('MOOD');
+       frame.text = [mood];
+       id3Tag.frames.push(frame);
+    }
+    
+    tagFile.save();
+    tagFile.dispose();
+    
+    console.log(`✓ QuickTag: Wrote Mood to ${path.basename(normalizedPath)}`);
+    return { success: true };
+  } catch (e) {
+    console.error('❌ QuickTag: Failed to write Mood:', e.message);
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('audioTags:setComments', async (_, fileUrlOrPath, comments) => {
+  try {
+    console.log(`[QuickTag Electron] Setting Comments: "${comments}"`);
+    
+    // Normalize file path
+    let normalizedPath = fileUrlOrPath;
+    if (normalizedPath.startsWith('file://localhost/')) {
+      normalizedPath = normalizedPath.replace('file://localhost/', '/');
+    } else if (normalizedPath.startsWith('file://')) {
+      normalizedPath = normalizedPath.replace('file://', '');
+    }
+    normalizedPath = decodeURIComponent(normalizedPath);
+    
+    try {
+      await fs.access(normalizedPath);
+    } catch {
+      return { success: false, error: 'File not found' };
+    }
+    
+    const { File: TagFile, Id3v2CommentFrame, Id3v2Settings, TagTypes } = require('node-taglib-sharp');
+    
+    Id3v2Settings.defaultVersion = 3;
+    Id3v2Settings.forceDefaultVersion = true;
+    
+    const tagFile = TagFile.createFromPath(normalizedPath);
+    const id3Tag = tagFile.getTag(TagTypes.Id3v2, true);
+    
+    // Remove existing COMM frames
+    const framesToRemove = id3Tag.frames.filter(f => f instanceof Id3v2CommentFrame);
+    framesToRemove.forEach(f => id3Tag.removeFrame(f));
+    
+    if (comments) {
+       // ISO-639-2 language code 'eng', description ''
+       const frame = new Id3v2CommentFrame('eng', ''); 
+       frame.text = comments;
+       id3Tag.frames.push(frame);
+    }
+    
+    tagFile.save();
+    tagFile.dispose();
+    
+    console.log(`✓ QuickTag: Wrote Comments to ${path.basename(normalizedPath)}`);
+    return { success: true };
+  } catch (e) {
+    console.error('❌ QuickTag: Failed to write Comments:', e.message);
     return { success: false, error: e.message };
   }
 });

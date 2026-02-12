@@ -33,29 +33,26 @@ export default function Header({
         
         <div className="header-actions">
           <button 
-            className={`btn btn-secondary ${isQuickTagMode ? 'btn-secondary-active' : ''}`} 
+            className={`btn btn-secondary ${isQuickTagMode ? 'active' : ''}`} 
             onClick={onQuickTag}
             title="Quick Tag mode"
           >
             Quick Tag
           </button>
-          <button 
-            className="btn btn-icon" 
-            onClick={onSettings}
-            title="Settings"
-          >
-            <Settings size={18} />
-          </button>
+          
+          <div className="toolbar-separator" style={{ height: '24px' }} />
+
           {onDatabase && (
             <button 
-              className="btn btn-accent" 
+              className="btn btn-secondary" 
               onClick={onDatabase}
               title="Rekordbox Database Manager"
             >
-              <Database size={18} />
-              Rekordbox DB
+              <Database size={16} />
+              <span>Rekordbox DB</span>
             </button>
           )}
+
           {onImport != null && (
             <button 
               className="btn btn-secondary" 
@@ -74,13 +71,25 @@ export default function Header({
               Import Folder
             </button>
           )}
+
+          <div className="toolbar-separator" style={{ height: '24px' }} />
+
           <button 
             className="btn btn-primary" 
             onClick={onExport}
             disabled={loading || !hasLibrary}
           >
-            <Download size={18} />
-            Export XML
+            <Download size={16} />
+            <span>Export XML</span>
+          </button>
+
+          <button 
+            className="btn btn-icon" 
+            onClick={onSettings}
+            title="Settings"
+            style={{ width: '32px', padding: 0 }}
+          >
+            <Settings size={16} />
           </button>
         </div>
       </div>

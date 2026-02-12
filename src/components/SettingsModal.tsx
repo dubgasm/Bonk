@@ -1,5 +1,6 @@
 import { X, Settings as SettingsIcon } from 'lucide-react';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { useColumnStore } from '../store/useColumnStore';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -7,6 +8,9 @@ interface SettingsModalProps {
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const { tagWriteSettings, updateTagWriteSetting, fieldMappings, apiCredentials, updateApiCredential, taggingPreferences, updateKeyFormat } = useSettingsStore();
+  const { columns, setColumnVisibility } = useColumnStore();
+
+  const isWaveformVisible = columns.find(c => c.id === 'waveform')?.visible ?? false;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -22,6 +26,26 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         </div>
 
         <div className="modal-content">
+          <div className="form-section">
+            <h3>Interface & Performance</h3>
+            <p className="section-description">
+              Customize the look and feel of the application
+            </p>
+            <div className="checkbox-grid">
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={isWaveformVisible}
+                  onChange={(e) => setColumnVisibility('waveform', e.target.checked)}
+                />
+                <div className="checkbox-label">
+                  <strong>Show Waveforms in Library</strong>
+                  <span>Display audio waveforms in the track list (may affect scrolling performance)</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
           <div className="form-section">
             <h3>🎵 API Credentials</h3>
             <p className="section-description">

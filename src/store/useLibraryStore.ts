@@ -50,6 +50,8 @@ const saveTagCategoriesToStorage = (categories: string[]): void => {
 interface LibraryState {
   library: RekordboxLibrary | null;
   searchIndex: SearchIndex | null;
+  sortState: { column: string; direction: 'asc' | 'desc' };
+  setSort: (column: string, direction: 'asc' | 'desc') => void;
   filteredTracks: Track[];
   selectedTrack: Track | null;
   selectedTracks: Set<string>;
@@ -108,6 +110,7 @@ interface LibraryState {
 export const useLibraryStore = create<LibraryState>((set, get) => ({
   library: null,
   searchIndex: null,
+  sortState: { column: 'DateAdded', direction: 'desc' },
   filteredTracks: [],
   selectedTrack: null,
   selectedTracks: new Set(),
@@ -212,13 +215,18 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     set({ selectedTracks: allIds });
   },
 
+  setSort: (column: string, direction: 'asc' | 'desc') => {
+    set({ sortState: { column, direction } });
+    get().filterTracks();
+  },
+
   setSearchQuery: (query: string) => {
     set({ searchQuery: query });
     get().filterTracks();
   },
 
   filterTracks: () => {
-    const { library, searchIndex, searchQuery, selectedPlaylist, showMissingOnly } = get();
+    const { library, searchIndex, searchQuery, selectedPlaylist, showMissingOnly, sortState } = get();
     if (!library) {
       set({ filteredTracks: [] });
       return;
@@ -251,6 +259,43 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       filtered = fastSearch(searchIndex, baseSet, query);
     } else {
       filtered = baseSet;
+    }
+
+    // Apply Sorting
+    if (sortState) {
+      const { column, direction } = sortState;
+      filtered.sort((a, b) => {
+        let valA: any = (a as any)[column];
+        let valB: any = (b as any)[column];
+
+        // Handle specific columns mapping
+        switch (column) {
+          case 'title': valA = a.Name; valB = b.Name; break;
+          case 'artist': valA = a.Artist; valB = b.Artist; break;
+          case 'album': valA = a.Album; valB = b.Album; break;
+          case 'genre': valA = a.Genre; valB = b.Genre; break;
+          case 'bpm': valA = parseFloat(a.AverageBpm || '0'); valB = parseFloat(b.AverageBpm || '0'); break;
+          case 'key': valA = a.Key || a.Tonality; valB = b.Key || b.Tonality; break;
+          case 'rating': 
+            valA = a.ratingByte || (a.Rating ? Number(a.Rating) : 0); 
+            valB = b.ratingByte || (b.Rating ? Number(b.Rating) : 0); 
+            break;
+          case 'time': valA = parseInt(a.TotalTime || '0'); valB = parseInt(b.TotalTime || '0'); break;
+          case 'year': valA = parseInt(a.Year || '0'); valB = parseInt(b.Year || '0'); break;
+          case 'DateAdded': valA = a.DateAdded; valB = b.DateAdded; break;
+          // Add other columns as needed
+        }
+
+        if (valA === valB) return 0;
+        
+        // Handle undefined/null
+        if (valA === undefined || valA === null) return 1;
+        if (valB === undefined || valB === null) return -1;
+
+        if (valA < valB) return direction === 'asc' ? -1 : 1;
+        if (valA > valB) return direction === 'asc' ? 1 : -1;
+        return 0;
+      });
     }
 
     set({ filteredTracks: filtered });

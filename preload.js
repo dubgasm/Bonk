@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Quick Tag: Write POPM rating
   audioTagsSetRating: (filePath, stars) => ipcRenderer.invoke('audioTags:setRating', filePath, stars),
   audioTagsSetRatingByte: (filePath, ratingByte) => ipcRenderer.invoke('audioTags:setRatingByte', filePath, ratingByte),
+  audioTagsSetMood: (filePath, mood) => ipcRenderer.invoke('audioTags:setMood', filePath, mood),
+  audioTagsSetComments: (filePath, comments) => ipcRenderer.invoke('audioTags:setComments', filePath, comments),
   // Audio conversion handlers
   convertAudioFile: (inputPath, outputPath, format) => ipcRenderer.invoke('convert-audio-file', inputPath, outputPath, format),
   batchConvertTracks: (conversions, options) => ipcRenderer.invoke('batch-convert-tracks', conversions, options),

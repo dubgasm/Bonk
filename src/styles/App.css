@@ -89,32 +89,54 @@ body {
 
 /* Buttons */
 .btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border: none;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   letter-spacing: 0.3px;
+  user-select: none;
+  height: 28px;
+  white-space: nowrap;
 }
 
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  pointer-events: none;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .btn-primary {
   background: var(--accent);
   color: white;
+  border-color: transparent;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
   transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .btn-secondary {
@@ -125,19 +147,32 @@ body {
 
 .btn-secondary:hover:not(:disabled) {
   background: var(--bg-hover);
-}
-
-.btn-accent {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-color: rgba(255, 255, 255, 0.2);
   color: white;
-  font-weight: 600;
-  border: none;
 }
 
-.btn-accent:hover:not(:disabled) {
-  background: linear-gradient(135deg, #7b93ff 0%, #8b5bb8 100%);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+.btn-danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #f87171;
+}
+
+.btn-sm {
+  padding: 4px 8px;
+  font-size: 11px;
+  height: 24px;
+  gap: 4px;
+}
+
+.btn-sm svg {
+  width: 14px;
+  height: 14px;
 }
 
 .import-btn-large {
@@ -486,11 +521,13 @@ body {
 /* Track Table */
 .track-table-wrapper {
   flex: 1;
-  overflow: hidden;
+  overflow: visible; /* Changed from hidden to allow dropdowns to overflow */
   display: flex;
   flex-direction: column;
   min-height: 0;
   position: relative;
+  border-top: 1px solid var(--border);
+  z-index: 5;
 }
 
 .track-table-container {
@@ -504,22 +541,136 @@ body {
   display: block;
 }
 
-/* Track Toolbar */
+/* Track Table Header */
+.track-table-header {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.header-cell {
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  height: 100%;
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.header-cell:last-child {
+  border-right: none;
+}
+
+.header-cell:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.resize-handle {
+  width: 4px;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.resize-handle:hover,
+.header-cell:hover .resize-handle {
+  background: var(--accent);
+}
+
+.drag-handle {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.header-cell:hover .drag-handle {
+  opacity: 0.5;
+}
+
+/* Track Table Rows */
+.track-table-rows {
+  /* Optimize track table rows container for virtualization */
+  will-change: scroll-position;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+
+.track-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  transition: background-color 0.05s ease;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.track-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.track-row.selected {
+  background: rgba(29, 185, 84, 0.12);
+  border-bottom-color: rgba(29, 185, 84, 0.1);
+}
+
+.track-row.selected:hover {
+  background: rgba(29, 185, 84, 0.18);
+}
+
+.track-row.multi-selected {
+  background: rgba(29, 185, 84, 0.08);
+}
+
+/* Cells */
+.track-row > div {
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-name {
+  font-weight: 500;
+  color: #fff;
+}
+
+.album-art-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Waveform integration */
+.waveform-placeholder {
+  width: 100%;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+}
+
+/* Toolbar Styles */
 .track-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 4px 10px;
-  background: rgba(37, 37, 37, 0.95);
-  border-bottom: 1px solid rgba(64, 64, 64, 0.5);
-  gap: 8px;
-  min-height: 32px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  height: 48px;
+  user-select: none;
 }
 
 .track-toolbar-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
 }
 
 .track-count {
@@ -538,14 +689,14 @@ body {
 
 .track-toolbar-actions {
   display: flex;
-  gap: 6px;
   align-items: center;
+  gap: 8px;
 }
 
 .toolbar-separator {
   width: 1px;
-  height: 20px;
-  background: rgba(64, 64, 64, 0.7);
+  height: 24px;
+  background: var(--border);
   margin: 0 4px;
 }
 
@@ -555,16 +706,20 @@ body {
 
 .toolbar-more-menu {
   position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 4px;
-  min-width: 180px;
-  padding: 6px 0;
+  top: calc(100% + 4px);
+  right: 0;
+  left: auto; /* Align to right if needed, or left */
+  min-width: 200px;
+  padding: 6px;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
   z-index: 100;
+  animation: slideDown 0.15s ease-out;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .toolbar-more-menu button {
@@ -572,36 +727,28 @@ body {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 14px;
-  font-size: 12px;
+  padding: 8px 10px;
+  font-size: 13px;
   text-align: left;
-  background: none;
+  background: transparent;
   border: none;
+  border-radius: 4px;
   color: var(--text-primary);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: all 0.15s;
 }
 
 .toolbar-more-menu button:hover:not(:disabled) {
   background: var(--bg-hover);
+  color: white;
 }
 
-.toolbar-more-menu button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.toolbar-more-menu button svg {
+  opacity: 0.7;
 }
 
-.btn-sm {
-  padding: 4px 8px;
-  font-size: 10px;
-  gap: 4px;
-  height: 24px;
-  font-weight: 500;
-}
-
-.btn-sm svg {
-  width: 13px;
-  height: 13px;
+.toolbar-more-menu button:hover svg {
+  opacity: 1;
 }
 
 .track-table {

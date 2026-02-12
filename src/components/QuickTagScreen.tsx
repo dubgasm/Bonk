@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { FolderOpen, ArrowUp, Settings } from 'lucide-react';
-import QuickTagContextMenu from './QuickTagContextMenu';
+import MoodPillTags, { parseMoodString, serializeMoods } from './MoodPillTags';
 import { Track } from '../types/track';
 import QuickTagPlayer from './QuickTagPlayer';
 import ReactiveButton from 'reactive-button';
@@ -8,6 +8,7 @@ import Rating from './ui/Rating';
 import { toast } from 'sonner';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { starsToPopmByte, popmByteToStars } from '../utils/popm';
+import QuickTagContextMenu from './QuickTagContextMenu';
 
 interface FolderNode {
   name: string;
@@ -177,6 +178,48 @@ export default function QuickTagScreen() {
       toast.error('Save failed', { id: toastId, description: error.message || 'Error writing rating', duration: 5000 });
     }
   }, [pendingSave]);
+
+  const saveMoodToFile = useCallback(async (track: Track, moodStr: string) => {
+    if (!track?.Location) return;
+    if (pendingSave) return;
+    if (!window.electronAPI?.audioTagsSetMood) {
+      toast.error('Save failed', { description: 'Mood writer not available', duration: 3000 });
+      return;
+    }
+    setPendingSave(true);
+    try {
+      // NOTE: We do not change HOW mood is written, we just call the existing API.
+      const result = await window.electronAPI.audioTagsSetMood(track.Location, moodStr);
+      setPendingSave(false);
+      if (result.success) {
+        toast.success('Mood Saved', { description: 'Mood updated', duration: 2000 });
+        // Update local state
+        setTracks(prev => prev.map(t => t.TrackID === track.TrackID ? { ...t, Mood: moodStr } : t));
+        setAllScannedTracks(prev => prev.map(t => t.TrackID === track.TrackID ? { ...t, Mood: moodStr } : t));
+        if (selectedTrack?.TrackID === track.TrackID) {
+          setSelectedTrack(prev => prev ? { ...prev, Mood: moodStr } : null);
+        }
+      } else {
+        toast.error('Save failed', { description: result.error || 'Failed to write mood', duration: 5000 });
+      }
+    } catch (error: any) {
+      setPendingSave(false);
+      toast.error('Save failed', { description: error.message || 'Error writing mood', duration: 5000 });
+    }
+  }, [pendingSave, selectedTrack]);
+
+  const handleMoodToggle = useCallback((mood: string) => {
+    if (!selectedTrack) return;
+    const currentMoods = parseMoodString(selectedTrack.Mood);
+    let newMoods: string[];
+    if (currentMoods.includes(mood)) {
+      newMoods = currentMoods.filter(m => m !== mood);
+    } else {
+      newMoods = [...currentMoods, mood];
+    }
+    const newMoodStr = serializeMoods(newMoods);
+    saveMoodToFile(selectedTrack, newMoodStr);
+  }, [selectedTrack, saveMoodToFile]);
 
   const loadFolder = async (folder: string, options: { autoSelectFolder?: boolean; skipScan?: boolean } = {}) => {
     const { autoSelectFolder = true, skipScan = false } = options;
@@ -632,7 +675,83 @@ export default function QuickTagScreen() {
           )}
 
           {/* Right: reserved space for later */}
-          <div className="quicktag-right-panel" />
+          <div className="quicktag-right-panel">
+            {selectedTrack ? (
+              <div style={{ padding: '20px' }}>
+                <h3 style={{ margin: '0 0 4px', fontSize: '14px', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {selectedTrack.Name}
+                </h3>
+                <p style={{ margin: '0 0 20px', fontSize: '12px', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {selectedTrack.Artist}
+                </p>
+
+                <div style={{ marginBottom: '24px' }}>
+                  <h4 style={{ fontSize: '10px', textTransform: 'uppercase', color: '#666', marginBottom: '10px' }}>
+                    Rating
+                  </h4>
+                  <Rating
+                    size="medium"
+                    max={5}
+                    value={popmByteToStars(selectedTrack.ratingByte ?? (selectedTrack.Rating ? Number(selectedTrack.Rating) : 0))}
+                    onChange={(newStars) => {
+                      const ratingByte = starsToPopmByte(newStars);
+                      updateRatingForTrack(selectedTrack.TrackID, ratingByte);
+                      if (autoSaveRating && ratingByte > 0) {
+                        saveRatingToFile(selectedTrack, ratingByte);
+                      }
+                    }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: '24px' }}>
+                  <h4 style={{ fontSize: '10px', textTransform: 'uppercase', color: '#666', marginBottom: '10px' }}>
+                    Moods & Vibe
+                  </h4>
+                  <MoodPillTags
+                    selectedMoods={parseMoodString(selectedTrack.Mood)}
+                    onToggle={handleMoodToggle}
+                    disabled={pendingSave}
+                  />
+                </div>
+
+                <div style={{ marginBottom: '24px' }}>
+                  <h4 style={{ fontSize: '10px', textTransform: 'uppercase', color: '#666', marginBottom: '10px' }}>
+                    Comments
+                  </h4>
+                  <textarea
+                    className="quicktag-comments-input"
+                    style={{
+                      width: '100%',
+                      minHeight: '80px',
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: '6px',
+                      padding: '8px',
+                      color: '#fff',
+                      fontSize: '12px',
+                      resize: 'vertical'
+                    }}
+                    value={selectedTrack.Comments || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSelectedTrack(prev => prev ? { ...prev, Comments: val } : null);
+                    }}
+                    onBlur={() => {
+                      // Save on blur if changed
+                      if (selectedTrack && selectedTrack.Location) {
+                        // TODO: Implement save comments
+                         window.electronAPI?.audioTagsSetComments?.(selectedTrack.Location, selectedTrack.Comments || '');
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#444', fontSize: '13px' }}>
+                Select a track to edit
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

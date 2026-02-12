@@ -10,6 +10,9 @@ import SearchBar from './components/SearchBar';
 import PlaylistSidebar from './components/PlaylistSidebar';
 import { Tag, Music, Database, Archive, Sparkles, Activity, FolderOpen } from 'lucide-react';
 
+import { ConfirmProvider } from './components/ConfirmProvider';
+import OperationsBar from './components/OperationsBar';
+
 // Lazy load heavy modal components for better initial load performance
 const ExportModal = lazy(() => import('./components/ExportModal'));
 const SettingsModal = lazy(() => import('./components/SettingsModal'));
@@ -74,8 +77,10 @@ declare global {
       rustAudioSeek?: (seconds: number) => Promise<{ success: boolean; error?: string }>;
       rustAudioGetWaveform?: (filePath: string, buckets: number) => Promise<{ success: boolean; waveform?: { duration_ms: number; peaks: number[] }; error?: string }>;
       // Quick Tag: Write POPM rating (accepts ratingByte 0-255 directly)
-      audioTagsSetRating?: (filePath: string, ratingByte: number) => Promise<{ success: boolean; ratingByte?: number; stars?: number; error?: string }>;
-      audioTagsSetRatingByte?: (filePath: string, ratingByte: number) => Promise<{ success: boolean; ratingByte?: number; stars?: number; error?: string }>;
+      audioTagsSetRating: (filePath: string, ratingByte: number) => Promise<{ success: boolean; ratingByte?: number; stars?: number; error?: string }>;
+      audioTagsSetRatingByte: (filePath: string, ratingByte: number) => Promise<{ success: boolean; ratingByte?: number; stars?: number; error?: string }>;
+      audioTagsSetMood: (filePath: string, mood: string) => Promise<{ success: boolean; error?: string }>;
+      audioTagsSetComments: (filePath: string, comments: string) => Promise<{ success: boolean; error?: string }>;
       // AutoTag handlers
       autotagStart?: (config: any) => Promise<{ success: boolean; results?: any[]; cancelled?: boolean; error?: string }>;
       autotagPause?: (runId: string) => Promise<{ success: boolean; error?: string }>;
@@ -135,6 +140,11 @@ function App() {
   } = useLibraryStore();
   const { setLastSyncDate } = useSettingsStore();
   const { isOpen: showAutoTagWizard, openModal: openAutoTagWizard } = useAutoTagStore();
+
+  const handleCancelOperation = (id: string) => {
+    // TODO: Implement cancel logic via IPC
+    console.log('Cancel operation:', id);
+  };
 
   const parser = new RekordboxParser();
 
@@ -548,25 +558,28 @@ function App() {
   };
 
   return (
-    <div
-      className={`app ${isDragOver ? 'drag-over' : ''}`}
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDragEnd={handleDragEnd}
-      onDrop={handleDrop}
-    >
-      <Header
-        onExport={handleOpenExportModal}
-        onSettings={() => setShowSettingsModal(true)}
-        onDatabase={() => setShowRekordboxDBModal(true)}
-        loading={loading}
-        hasLibrary={!!library}
-        onQuickTag={() => setMode('quickTag')}
-        isQuickTagMode={mode === 'quickTag'}
-      />
-      
-      {error && (
+    <ConfirmProvider>
+      <div
+        className={`app ${isDragOver ? 'drag-over' : ''}`}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDragEnd={handleDragEnd}
+        onDrop={handleDrop}
+      >
+        <Header
+          onExport={handleOpenExportModal}
+          onSettings={() => setShowSettingsModal(true)}
+          onDatabase={() => setShowRekordboxDBModal(true)}
+          loading={loading}
+          hasLibrary={!!library}
+          onQuickTag={() => setMode('quickTag')}
+          isQuickTagMode={mode === 'quickTag'}
+        />
+        
+        <OperationsBar onCancel={handleCancelOperation} />
+        
+        {error && (
         <div className="error-banner">
           <span>{error}</span>
           <button onClick={() => setError(null)}>×</button>
@@ -772,8 +785,9 @@ function App() {
             border: '1px solid var(--border)',
           },
         }}
-      />
-    </div>
+        />
+      </div>
+    </ConfirmProvider>
   );
 }
 

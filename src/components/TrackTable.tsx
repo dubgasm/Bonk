@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useAutoTagStore } from '../store/useAutoTagStore';
+import { useColumnStore } from '../store/useColumnStore';
 import TrackContextMenu from './TrackContextMenu';
 import TrackTableToolbar from './TrackTableToolbar';
+import TrackTableHeader from './TrackTableHeader';
 import TagsModal from './TagsModal';
 import TagSelectorModal from './TagSelectorModal';
 import BatchTagUpdateModal from './BatchTagUpdateModal';
@@ -16,16 +18,13 @@ import FindLostTracksModal from './FindLostTracksModal';
 import RemoveFromPlaylistModal from './RemoveFromPlaylistModal';
 import SmartFixesModal, { SmartFixConfig } from './SmartFixesModal';
 import DeleteTracksModal from './DeleteTracksModal';
-import AudioFeaturesWizard from './AudioFeaturesWizard';
+const AudioFeaturesWizard = lazy(() => import('./AudioFeaturesWizard'));
 import LazyAlbumArt from './LazyAlbumArt';
+import LazyWaveform from './LazyWaveform';
 import { Track } from '../types/track';
 
 // Constants for virtual scrolling
-const ROW_HEIGHT = 50; // Fixed row height for virtualization (increased for better spacing)
 const OVERSCAN_COUNT = 10; // Render extra rows above/below viewport for smoother scrolling
-
-// Column layout: checkbox, album art, title, artist, album, genre, bpm, key, time, tags, year
-const columnTemplate = '45px 70px 2fr 1.5fr 1.5fr 1.2fr 0.9fr 1fr 0.8fr 1fr 0.7fr';
 
 export default function TrackTable() {
   const {
@@ -50,6 +49,7 @@ export default function TrackTable() {
 
   const { skipPlaylistRemovalConfirm, setSkipPlaylistRemovalConfirm } = useSettingsStore();
   const { openModal: openAutoTagWizard } = useAutoTagStore();
+  const { columns, columnOrder, fontSize, density } = useColumnStore();
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; track?: typeof filteredTracks[0] } | null>(null);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
@@ -71,12 +71,31 @@ export default function TrackTable() {
   const [isCheckingMissing, setIsCheckingMissing] = useState(false);
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
 
+  // Derived state for layout
+  const visibleColumns = useMemo(() => {
+    return columnOrder
+      .map(id => columns.find(c => c.id === id))
+      .filter((c): c is typeof columns[0] => !!c && c.visible);
+  }, [columns, columnOrder]);
+
+  const gridTemplate = useMemo(() => {
+    return visibleColumns.map(c => c.width).join(' ');
+  }, [visibleColumns]);
+
+  const rowHeight = useMemo(() => {
+    switch (fontSize) {
+      case 'small': return 44;
+      case 'large': return 56;
+      default: return 50;
+    }
+  }, [fontSize]);
+
   // Virtual scrolling setup
   const parentRef = useRef<HTMLDivElement>(null);
   const rowVirtualizer = useVirtualizer({
     count: filteredTracks.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: OVERSCAN_COUNT,
   });
 
@@ -430,6 +449,62 @@ export default function TrackTable() {
 
   // Removed debug logs for better performance
 
+// Helper to render cell based on column ID
+const renderCell = (track: Track, columnId: string) => {
+  switch (columnId) {
+    case 'checkbox':
+      // Handled separately in the row render for now, or we can move it here
+      return null;
+    case 'art':
+      return (
+        <div className="album-art-cell">
+          <LazyAlbumArt
+            trackId={track.TrackID}
+            location={track.Location}
+            albumArt={(track as any).AlbumArt}
+            size={fontSize === 'small' ? 32 : fontSize === 'large' ? 40 : 36}
+          />
+        </div>
+      );
+    case 'title': return renderEditableCell(track, 'Name', track.Name || 'Unknown', 'track-name');
+    case 'artist': return renderEditableCell(track, 'Artist', track.Artist || 'Unknown Artist');
+    case 'album': return renderEditableCell(track, 'Album', track.Album || '');
+    case 'genre': return renderEditableCell(track, 'Genre', track.Genre || '');
+    case 'bpm': return renderEditableCell(track, 'AverageBpm', track.AverageBpm ? parseFloat(track.AverageBpm).toFixed(1) : '');
+    case 'key': return renderEditableCell(track, 'Key', track.Key || '');
+    case 'rating': return <div>{track.Rating ? `${track.Rating}★` : '-'}</div>; // Simple display for now
+    case 'time': return <div>{formatTime(track.TotalTime)}</div>;
+    case 'year': return renderEditableCell(track, 'Year', track.Year || '');
+    case 'tags':
+      return (
+        <div
+          className="tags-cell"
+          title="Click to edit tags"
+          onClick={(e) => {
+            e.stopPropagation();
+            setTagSelectorTrack(track);
+          }}
+        >
+          {(track.tags || []).length
+            ? track.tags!.map((t) => t.name).join(', ')
+            : 'Add tags'}
+        </div>
+      );
+    case 'waveform':
+      return (
+        <div style={{ width: '100%', padding: '0 4px' }}>
+          <LazyWaveform
+            trackId={track.TrackID}
+            location={track.Location}
+            height={24}
+          />
+        </div>
+      );
+    default:
+      return null;
+  }
+};
+
   return (
     <div className="track-table-wrapper" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <TrackTableToolbar
@@ -492,47 +567,12 @@ export default function TrackTable() {
       <div className="track-table-container">
         {filteredTracks.length > 0 && (
           <div style={{ width: '100%' }}>
-            <div
-              className="track-table-header"
-              style={{
-                display: 'grid',
-                gridTemplateColumns: columnTemplate,
-                alignItems: 'center',
-                padding: '6px 8px',
-                boxSizing: 'border-box',
-                borderBottom: '1px solid #222',
-                fontWeight: 600
-              }}
-            >
-              <div>
-                <input
-                  type="checkbox"
-                  checked={selectedTracks.size === filteredTracks.length && filteredTracks.length > 0}
-                  onChange={() => {
-                    if (selectedTracks.size === filteredTracks.length) {
-                      clearSelection();
-                    } else {
-                      selectAll();
-                    }
-                  }}
-                />
-              </div>
-              <div style={{ width: '60px' }}>Art</div>
-              <div>Title</div>
-              <div>Artist</div>
-              <div>Album</div>
-              <div>Genre</div>
-              <div>BPM</div>
-              <div>Key</div>
-              <div>Time</div>
-              <div>Tags</div>
-              <div>Year</div>
-            </div>
+            <TrackTableHeader />
 
             {/* Virtualized track list for optimal performance with large libraries */}
             <div 
               ref={parentRef}
-              className="track-table-rows" 
+              className={`track-table-rows density-${density}`}
               style={{ 
                 height: 'calc(100vh - 280px)', // Dynamic height based on viewport
                 minHeight: 400,
@@ -554,16 +594,15 @@ export default function TrackTable() {
                   
                   const isSelected = selectedTrack?.TrackID === track.TrackID;
                   const isMultiSelected = selectedTracks.has(track.TrackID);
-                  const bpmValue = track.AverageBpm ? parseFloat(track.AverageBpm).toFixed(1) : '';
 
                   return (
                     <div
                       key={track.TrackID || virtualRow.index}
                       style={{
                         display: 'grid',
-                        gridTemplateColumns: columnTemplate,
+                        gridTemplateColumns: gridTemplate,
                         alignItems: 'center',
-                        padding: '6px 8px',
+                        padding: '0 8px',
                         boxSizing: 'border-box',
                         position: 'absolute',
                         top: 0,
@@ -571,6 +610,7 @@ export default function TrackTable() {
                         width: '100%',
                         height: `${virtualRow.size}px`,
                         transform: `translateY(${virtualRow.start}px)`,
+                        fontSize: fontSize === 'small' ? '12px' : fontSize === 'large' ? '14px' : '13px',
                       }}
                       className={`track-row ${isSelected ? 'selected' : ''} ${
                         isMultiSelected ? 'multi-selected' : ''
@@ -581,41 +621,21 @@ export default function TrackTable() {
                       onDragStart={(e) => handleDragStart(e, track)}
                       onDragEnd={(e) => { try { e.stopPropagation(); } catch (_) {} }}
                     >
-                      <div onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={isMultiSelected}
-                          onChange={() => toggleTrackSelection(track.TrackID)}
-                        />
-                      </div>
-                      <div className="album-art-cell">
-                        <LazyAlbumArt
-                          trackId={track.TrackID}
-                          location={track.Location}
-                          albumArt={(track as any).AlbumArt}
-                          size={36}
-                        />
-                      </div>
-                      {renderEditableCell(track, 'Name', track.Name || 'Unknown', 'track-name')}
-                      {renderEditableCell(track, 'Artist', track.Artist || 'Unknown Artist')}
-                      {renderEditableCell(track, 'Album', track.Album || '')}
-                      {renderEditableCell(track, 'Genre', track.Genre || '')}
-                      {renderEditableCell(track, 'AverageBpm', bpmValue)}
-                      {renderEditableCell(track, 'Key', track.Key || '')}
-                      <div>{formatTime(track.TotalTime)}</div>
-                      <div
-                        className="tags-cell"
-                        title="Click to edit tags"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setTagSelectorTrack(track);
-                        }}
-                      >
-                        {(track.tags || []).length
-                          ? track.tags!.map((t) => t.name).join(', ')
-                          : 'Add tags'}
-                      </div>
-                      {renderEditableCell(track, 'Year', track.Year || '')}
+                      {visibleColumns.map(col => (
+                        <div key={col.id} style={{ overflow: 'hidden', height: '100%', display: 'flex', alignItems: 'center' }}>
+                          {col.id === 'checkbox' ? (
+                            <div onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={isMultiSelected}
+                                onChange={() => toggleTrackSelection(track.TrackID)}
+                              />
+                            </div>
+                          ) : (
+                            renderCell(track, col.id)
+                          )}
+                        </div>
+                      ))}
                     </div>
                   );
                 })}
@@ -776,14 +796,16 @@ export default function TrackTable() {
         contextLabel={selectedPlaylist ? `"${selectedPlaylist.Name}"` : undefined}
       />
 
-      <AudioFeaturesWizard
-        isOpen={showAudioFeaturesWizard}
-        onClose={() => {
-          setShowAudioFeaturesWizard(false);
-          setAudioFeaturesFiles([]);
-        }}
-        selectedFiles={audioFeaturesFiles}
-      />
+      <Suspense fallback={null}>
+        <AudioFeaturesWizard
+          isOpen={showAudioFeaturesWizard}
+          onClose={() => {
+            setShowAudioFeaturesWizard(false);
+            setAudioFeaturesFiles([]);
+          }}
+          selectedFiles={audioFeaturesFiles}
+        />
+      </Suspense>
     </div>
   );
 }
